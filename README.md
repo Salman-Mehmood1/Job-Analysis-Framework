@@ -16,13 +16,14 @@ Each organisation is a separate tenant. Signing up at `/register` creates a new 
 
 - **Scoring engine** (`shared/engine.ts`): a formula-for-formula port of the Evaluator, Scale and Grades & Bands sheets. It covers the 15% point scale, KH/PS/AC lookups, shading, the PS % rounded down to the scale, profile (A/P/L) and the three checks (profile beyond A4/P4, letter stair, borderline grade). The workbook's worked examples are unit tests: Accounts Assistant 206 / G6, Finance Manager 1,194 / G15, Plant Manager 1,564 / G17.
 - **Grades computed on read**: grades are not stored. Each evaluation's grade is derived from the organisation's current grade structure, so editing the structure re-grades everything at once.
-- **Grade structure editor** (admin and management):
-  - Change the number of grades and each grade's minimum points, career level and typical roles.
-  - Generate an evenly progressing structure from a grade count and boundaries.
-  - Reset to the workbook's 23 grades.
-  - See a **live impact preview** (how many jobs move up or down, and the distribution before and after) before saving.
-- **Positions grouped by grade**: every grade with its point range and the positions in it, optionally sub-grouped by company or department.
-- **Slicers** on company, department, role, grade, job family, career level, status and evaluator. They cascade (for example, choosing a company narrows the department list) and drive the KPIs, charts, grade groupings, data table and CSV export.
+- **Multiple grade structures** (admin and management): keep separate structures for groups graded differently, such as blue and white collar, individual contributors and managers, or each company.
+  - Each job is graded by the structure assigned to its position. If it has none, it uses its company's default structure, and otherwise the organisation default. Every evaluation, calibration, analysis and dashboard uses the job's own structure.
+  - Create a structure from evenly spaced grades, as a copy of another, or from the 23 standard grades. Rename it, make it the organisation default, or delete it (its jobs fall back to their defaults).
+  - Edit any structure's number of grades, minimum points, career levels and typical roles, with a **live impact preview** of how many of *its* jobs move up or down before saving.
+  - **Applies to** tab: make a structure the default for one or more companies, and assign positions to it directly (search and filter, then bulk assign or reset to automatic). Positions can also be set on the Positions form or with a `gradeStructure` column in the CSV import.
+  - Databases created before this feature are upgraded on start: the existing grades become the "Standard" default structure, with no change to any grade.
+- **Positions grouped by grade**: every grade with its point range and the positions in it, optionally sub-grouped by company or department. When several structures are in use, the grade views show one structure at a time, with a picker.
+- **Slicers** on company, department, role, grade structure, grade (labelled with its structure, e.g. "Blue collar · G5"), job family, career level, status and evaluator. They cascade (for example, choosing a company narrows the department list) and drive the KPIs, charts, grade groupings, data table and CSV export.
 - **JD analyser** (every role): paste a job description or upload a **Word (.docx or .doc), PDF** or text file (up to 10 MB). The extracted text is shown for review before analysis, and a "Job title:" line in the document fills in the title. Scanned PDFs without a text layer are rejected with a clear message, since there is no OCR. The Positions form can load job descriptions from the same file types. The analyser then returns all eight element levels, each with its reasoning, plus points and grade from the same engine.
   - With `ANTHROPIC_API_KEY` set, Claude does the analysis using structured output. Without it, a transparent rule-based analyser is used, and the UI says which method ran.
   - Admin and management can save an analysis as an **independent evaluation**, linked to an existing position or a new one. It then goes into review and grading like any other evaluation.

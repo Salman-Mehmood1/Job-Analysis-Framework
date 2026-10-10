@@ -6,7 +6,8 @@ import type { DB } from '../db';
 import { HttpError, body, idParam, me } from '../http';
 import { MAX_UPLOAD_BYTES, extractJobDescription } from '../extract';
 import { MODEL, aiEnabled, analyseJobDescription, type JdAnalysis } from '../jd';
-import { getGrades, logHistory } from '../services';
+import { logHistory } from '../services';
+import { loadStructures, resolveStructure, structureForPosition } from '../structures';
 
 export function jdRoutes(db: DB) {
   const r = Router();
@@ -37,8 +38,13 @@ export function jdRoutes(db: DB) {
         text: z.string().trim().min(20, 'Paste a job description of at least a few sentences').max(50_000),
         positionId: z.number().int().nullable().optional(),
         method: z.enum(['auto', 'ai', 'rules']).default('auto'),
+        /** Structure to grade a standalone analysis with; a linked position uses its own. */
+        structureId: z.number().int().nullable().optional(),
       }),
     );
+    if (b.structureId && !db.prepare('SELECT 1 FROM grade_structures WHERE id = ? AND org_id = ?').get(b.structureId, u.orgId)) {
+      throw new HttpError(400, 'Unknown grade structure');
+    }
     if (b.positionId) {
       if (!db.prepare('SELECT 1 FROM positions WHERE id = ? AND org_id = ?').get(b.positionId, u.orgId)) {
         throw new HttpError(400, 'Unknown position');
@@ -51,32 +57,52 @@ export function jdRoutes(db: DB) {
       }
     }
     const analysis = await analyseJobDescription(b.title, b.text, b.method);
-    const result = evaluate(analysis.inputs, getGrades(db, u.orgId));
+    const structure = b.positionId
+      ? structureForPosition(db, u.orgId, b.positionId).structure
+      : resolveStructure(loadStructures(db, u.orgId), b.structureId, null).structure;
+    const result = evaluate(analysis.inputs, structure.bands);
     const id = Number(
       db
-        .prepare('INSERT INTO jd_analyses (org_id, user_id, position_id, title, jd_text, method, result) VALUES (?, ?, ?, ?, ?, ?, ?)')
-        .run(u.orgId, u.id, b.positionId ?? null, b.title || analysis.suggested.title || 'Untitled job', b.text, analysis.method, JSON.stringify(analysis))
+        .prepare('INSERT INTO jd_analyses (org_id, user_id, position_id, title, jd_text, method, result, structure_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(u.orgId, u.id, b.positionId ?? null, b.title || analysis.suggested.title || 'Untitled job', b.text, analysis.method, JSON.stringify(analysis), b.positionId ? null : structure.id)
         .lastInsertRowid,
     );
-    res.json({ id, analysis, result });
+    res.json({ id, analysis, result, gradeStructure: { id: structure.id, name: structure.name } });
   });
 
   r.get('/analyses', anyone, (req, res) => {
     const u = me(req);
-    const grades = getGrades(db, u.orgId);
+    const ctx = loadStructures(db, u.orgId);
     const rows = db
       .prepare(
         `SELECT a.id, a.title, a.jd_text AS jdText, a.method, a.result, a.created_at AS createdAt, a.position_id AS positionId,
-                u.name AS userName, u.role AS userRole, p.code AS positionCode
+                u.name AS userName, u.role AS userRole, p.code AS positionCode,
+                a.structure_id AS structureId, p.grade_structure_id AS positionStructureId, p.company_id AS companyId
          FROM jd_analyses a JOIN users u ON u.id = a.user_id LEFT JOIN positions p ON p.id = a.position_id
          WHERE a.org_id = ? ${u.role === 'evaluator' ? 'AND a.user_id = ?' : ''}
          ORDER BY a.id DESC LIMIT 500`,
       )
-      .all(...(u.role === 'evaluator' ? [u.orgId, u.id] : [u.orgId])) as ({ result: string } & Record<string, unknown>)[];
+      .all(...(u.role === 'evaluator' ? [u.orgId, u.id] : [u.orgId])) as ({
+        result: string;
+        positionId: number | null;
+        structureId: number | null;
+        positionStructureId: number | null;
+        companyId: number | null;
+      } & Record<string, unknown>)[];
     res.json(
-      rows.map((row) => {
+      rows.map(({ structureId, positionStructureId, companyId, ...row }) => {
         const analysis = JSON.parse(row.result) as JdAnalysis;
-        return { ...row, result: undefined, analysis, score: evaluate(analysis.inputs, grades) };
+        // Linked to a position: grade like that position. Otherwise: the structure chosen when it ran.
+        const { structure } = row.positionId
+          ? resolveStructure(ctx, positionStructureId, companyId)
+          : resolveStructure(ctx, structureId, null);
+        return {
+          ...row,
+          result: undefined,
+          analysis,
+          score: evaluate(analysis.inputs, structure.bands),
+          gradeStructure: { id: structure.id, name: structure.name },
+        };
       }),
     );
   });
@@ -105,6 +131,8 @@ export function jdRoutes(db: DB) {
             jobFamily: z.string().trim().max(120).default(''),
             companyId: z.number().int(),
             departmentId: z.number().int(),
+            /** null/absent = automatic (company default, else organisation default). */
+            gradeStructureId: z.number().int().nullable().optional(),
           }),
         }),
       ]),
@@ -126,10 +154,13 @@ export function jdRoutes(db: DB) {
         if (db.prepare('SELECT 1 FROM positions WHERE org_id = ? AND code = ?').get(u.orgId, p.code)) {
           throw new HttpError(409, `Position code ${p.code} already exists`);
         }
+        if (p.gradeStructureId && !db.prepare('SELECT 1 FROM grade_structures WHERE id = ? AND org_id = ?').get(p.gradeStructureId, u.orgId)) {
+          throw new HttpError(400, 'Unknown grade structure');
+        }
         positionId = Number(
           db
-            .prepare('INSERT INTO positions (org_id, company_id, department_id, code, title, job_family, job_description) VALUES (?, ?, ?, ?, ?, ?, ?)')
-            .run(u.orgId, p.companyId, p.departmentId, p.code, p.title, p.jobFamily, row.jd_text).lastInsertRowid,
+            .prepare('INSERT INTO positions (org_id, company_id, department_id, code, title, job_family, job_description, grade_structure_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+            .run(u.orgId, p.companyId, p.departmentId, p.code, p.title, p.jobFamily, row.jd_text, p.gradeStructureId ?? null).lastInsertRowid,
         );
       }
       const rationale = Object.entries(analysis.rationale)

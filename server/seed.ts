@@ -7,7 +7,7 @@
  */
 import bcrypt from 'bcryptjs';
 import { EMPTY_INPUTS, type EvaluationInputs } from '../shared/engine';
-import { type DB, openDb, seedDefaultGrades } from './db';
+import { type DB, createStructure, openDb, seedDefaultGrades } from './db';
 import { logHistory } from './services';
 
 type Lv = [string, string, string, string, string, string, string, string, string?, string?];
@@ -113,6 +113,33 @@ export function seedDemo(db: DB) {
       if (['submitted', 'approved'].includes(status)) logHistory(db, evId, evaluator, 'submitted');
       if (status === 'approved') logHistory(db, evId, mgmt, 'approved');
     }
+
+    // Extra grade structures: one assigned to individual blue-collar positions,
+    // one the default for every job in Acme Services.
+    const blueCollar = createStructure(db, orgId, 'Blue collar', 'Operators, technicians and support staff on hourly pay scales.', [
+      { grade: 1, minPoints: 0, careerLevel: 'Entry', typicalRoles: 'Helper, attendant' },
+      { grade: 2, minPoints: 90, careerLevel: 'Entry', typicalRoles: 'Labourer, packer' },
+      { grade: 3, minPoints: 115, careerLevel: 'Semi-skilled', typicalRoles: 'Machine operator' },
+      { grade: 4, minPoints: 145, careerLevel: 'Semi-skilled', typicalRoles: 'Senior operator' },
+      { grade: 5, minPoints: 180, careerLevel: 'Skilled', typicalRoles: 'Inspector, technician' },
+      { grade: 6, minPoints: 225, careerLevel: 'Skilled', typicalRoles: 'Senior technician' },
+      { grade: 7, minPoints: 280, careerLevel: 'Lead hand', typicalRoles: 'Charge hand' },
+      { grade: 8, minPoints: 350, careerLevel: 'Supervisory', typicalRoles: 'Shift supervisor' },
+    ]);
+    for (const code of ['OPS-05', 'OPS-08', 'QA-03', 'ADM-01']) {
+      db.prepare('UPDATE positions SET grade_structure_id = ? WHERE org_id = ? AND code = ?').run(blueCollar, orgId, code);
+    }
+    const services = createStructure(db, orgId, 'Acme Services', 'Broader bands used across the services company.', [
+      { grade: 1, minPoints: 0, careerLevel: 'Support', typicalRoles: 'Receptionist, office assistant' },
+      { grade: 2, minPoints: 175, careerLevel: 'Associate', typicalRoles: 'Coordinator, officer' },
+      { grade: 3, minPoints: 300, careerLevel: 'Professional', typicalRoles: 'Analyst, developer, HR officer' },
+      { grade: 4, minPoints: 480, careerLevel: 'Senior professional', typicalRoles: 'Senior developer, sales executive' },
+      { grade: 5, minPoints: 750, careerLevel: 'Manager', typicalRoles: 'Team manager' },
+      { grade: 6, minPoints: 1150, careerLevel: 'Head of function', typicalRoles: 'Head of IT, HR manager' },
+      { grade: 7, minPoints: 1750, careerLevel: 'Director', typicalRoles: 'Sales director' },
+      { grade: 8, minPoints: 2700, careerLevel: 'Executive', typicalRoles: 'Managing director' },
+    ]);
+    db.prepare('UPDATE companies SET default_structure_id = ? WHERE id = ?').run(services, companies.get('Acme Services')!);
 
     // A job rated independently by both evaluators, ready for calibration.
     const procDept = depts.get('Acme Manufacturing/Finance')!;

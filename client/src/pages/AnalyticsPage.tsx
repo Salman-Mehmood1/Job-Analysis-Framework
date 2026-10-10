@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import type { GradeBand, JobRecord } from '../api';
+import type { JobRecord } from '../api';
 import { BASIS_LABEL, JobBadges, jobHref, spreadFlag } from '../components/JobBits';
 import { GradeGroups } from '../components/GradeGroups';
 import { type Dim, type Filters, SlicerBar, applyFilters, dimValue } from '../components/Slicers';
 import { ErrorAlert, Kpi, STATUS_LABEL, StatusBadge, downloadCsv, fmt } from '../components/ui';
-import { useData, useUser } from '../hooks';
+import { useData, useStructures, useUser } from '../hooks';
 
 const SERIES = Array.from({ length: 8 }, (_, i) => `var(--series-${i + 1})`);
 const MAX_STACK = 7; // 8th slot is "Other"
@@ -31,7 +31,8 @@ export default function AnalyticsPage() {
   const user = useUser();
   const nav = useNavigate();
   const evals = useData<JobRecord[]>('/jobs');
-  const grades = useData<{ grades: GradeBand[] }>('/grades');
+  const structures = useStructures();
+  const [structureView, setStructureView] = useState<number | null>(null);
   const [filters, setFilters] = useState<Filters>({});
   const [tab, setTab] = useState<Tab>('overview');
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 }>({ key: 'points', dir: -1 });
@@ -40,7 +41,29 @@ export default function AnalyticsPage() {
   const all = evals.data ?? [];
   const rows = useMemo(() => applyFilters(all, filters), [all, filters]);
   const scored = rows.filter((r) => r.result?.complete);
-  const gradeList = grades.data?.grades ?? [];
+
+  // Grades are only comparable within one structure, so grade views show one structure at a time:
+  // the one picked, else the one with the most jobs in view.
+  const structuresInView = useMemo(() => {
+    const n = new Map<number, number>();
+    for (const r of rows) n.set(r.gradeStructure.id, (n.get(r.gradeStructure.id) ?? 0) + 1);
+    return structures.structures.filter((x) => n.has(x.id)).sort((a, b) => n.get(b.id)! - n.get(a.id)!);
+  }, [rows, structures.structures]);
+  const viewId = structuresInView.some((x) => x.id === structureView) ? structureView! : structuresInView[0]?.id;
+  const viewStructure = structures.structures.find((x) => x.id === viewId);
+  const gradeList = viewStructure?.bands ?? [];
+  const viewRows = rows.filter((r) => r.gradeStructure.id === viewId);
+  const viewScored = viewRows.filter((r) => r.result?.complete);
+  const structurePicker = structuresInView.length > 1 && (
+    <label className="field">
+      Grade structure
+      <select value={viewId} onChange={(e) => setStructureView(Number(e.target.value))}>
+        {structuresInView.map((x) => (
+          <option key={x.id} value={x.id}>{x.name} ({rows.filter((r) => r.gradeStructure.id === x.id).length} jobs)</option>
+        ))}
+      </select>
+    </label>
+  );
 
   // Jobs per grade, stacked by company. Company colours follow the full, unfiltered company list so a slicer never repaints them.
   const companyOrder = useMemo(() => [...new Set(all.map((r) => r.company.name))].sort(), [all]);
@@ -49,7 +72,7 @@ export default function AnalyticsPage() {
   const perGrade = gradeList.map((g) => {
     const row: Record<string, number | string> = { grade: `G${g.grade}` };
     for (const k of stackKeys) row[k] = 0;
-    for (const r of scored) if (r.result!.grade === g.grade) row[stackKey(r.company.name)] = (row[stackKey(r.company.name)] as number) + 1;
+    for (const r of viewScored) if (r.result!.grade === g.grade) row[stackKey(r.company.name)] = (row[stackKey(r.company.name)] as number) + 1;
     return row;
   });
   const lastUsed = perGrade.reduce((m, r, i) => (stackKeys.some((k) => r[k]) ? i : m), -1);
@@ -86,14 +109,14 @@ export default function AnalyticsPage() {
 
   const exportCsv = () =>
     downloadCsv('job-evaluations.csv', [
-      ['Code', 'Role', 'Job family', 'Company', 'Department', 'Evaluators', 'Result basis', 'Status', 'KH tech', 'KH breadth', 'KH HR', 'KH shade', 'PS env', 'PS challenge', 'PS pick', 'AC freedom', 'AC magnitude', 'AC impact', 'AC shade', 'KH pts', 'PS %', 'PS pts', 'AC pts', 'Total', 'Profile', 'Grade', 'Career level', 'Checks', 'Adjusted by management', 'Lowest evaluator total', 'Highest evaluator total'],
+      ['Code', 'Role', 'Job family', 'Company', 'Department', 'Evaluators', 'Result basis', 'Status', 'KH tech', 'KH breadth', 'KH HR', 'KH shade', 'PS env', 'PS challenge', 'PS pick', 'AC freedom', 'AC magnitude', 'AC impact', 'AC shade', 'KH pts', 'PS %', 'PS pts', 'AC pts', 'Total', 'Profile', 'Grade structure', 'Grade', 'Career level', 'Checks', 'Adjusted by management', 'Lowest evaluator total', 'Highest evaluator total'],
       ...tableRows.map((r) => {
         const i = r.effectiveInputs;
         const x = r.result;
         return [
           r.position.code, r.position.title, r.position.jobFamily, r.company.name, r.department.name, r.evaluators.map((e) => e.name).join('; '), BASIS_LABEL[r.basis], STATUS_LABEL[r.status],
           i?.khTechnical, i?.khBreadth, i?.khHumanRelations, i?.khShade, i?.psEnvironment, i?.psChallenge, i?.psPick, i?.acFreedom, i?.acMagnitude, i?.acImpact, i?.acShade,
-          x?.khPoints, x?.psPercent, x?.psPoints, x?.acPoints, x?.totalPoints, x?.profile, x?.grade, x?.careerLevel, x?.checks.join('; '),
+          x?.khPoints, x?.psPercent, x?.psPoints, x?.acPoints, x?.totalPoints, x?.profile, r.gradeStructure.name, x?.grade, x?.careerLevel, x?.checks.join('; '),
           r.adjusted ? 'Yes' : 'No', r.spread?.minPoints, r.spread?.maxPoints,
         ];
       }),
@@ -108,7 +131,7 @@ export default function AnalyticsPage() {
         </div>
         <button onClick={exportCsv} disabled={!rows.length}>Export CSV</button>
       </div>
-      <ErrorAlert error={evals.error ?? grades.error} />
+      <ErrorAlert error={evals.error ?? structures.error} />
 
       <SlicerBar rows={all} filters={filters} onChange={setFilters} />
 
@@ -133,8 +156,13 @@ export default function AnalyticsPage() {
       {tab === 'overview' && (
         <div className="grid grid-2">
           <div className="card">
-            <h2>Jobs per grade</h2>
-            <p className="muted small">Scored positions in each grade of the current structure, by company.</p>
+            <div className="row spread" style={{ alignItems: 'flex-start' }}>
+              <div>
+                <h2>Jobs per grade</h2>
+                <p className="muted small">Scored jobs in each grade of the {viewStructure?.name ?? ''} structure, by company.</p>
+              </div>
+              {structurePicker}
+            </div>
             {stackKeys.length > 1 && (
               <div className="legend">
                 {stackKeys.map((k, i) => <span key={k}><i style={{ background: SERIES[k === 'Other' ? 7 : i] }} />{k}</span>)}
@@ -205,7 +233,12 @@ export default function AnalyticsPage() {
         </div>
       )}
 
-      {tab === 'grades' && <GradeGroups rows={rows} grades={gradeList} linkBase={linkBase} />}
+      {tab === 'grades' && (
+        <div>
+          {structurePicker && <div className="card" style={{ marginBottom: 12 }}>{structurePicker}<p className="small muted" style={{ margin: '6px 0 0' }}>Jobs on other structures are listed under their own structure.</p></div>}
+          <GradeGroups rows={viewRows} grades={gradeList} linkBase={linkBase} />
+        </div>
+      )}
 
       {tab === 'table' && (
         <div className="card table-wrap">
@@ -213,7 +246,7 @@ export default function AnalyticsPage() {
             <thead>
               <tr>
                 {th('code', 'Code')}{th('role', 'Role')}{th('company', 'Company')}{th('department', 'Department')}
-                {th('evaluator', 'Evaluators')}{th('status', 'Status')}{th('points', 'Points', true)}{th('grade', 'Grade', true)}<th>Profile</th><th>Checks</th>
+                {th('evaluator', 'Evaluators')}{th('status', 'Status')}{th('points', 'Points', true)}{th('structure', 'Structure')}{th('grade', 'Grade', true)}<th>Profile</th><th>Checks</th>
               </tr>
             </thead>
             <tbody>
@@ -225,12 +258,13 @@ export default function AnalyticsPage() {
                   <td>{r.evaluators.map((e) => e.name).join(', ')}</td>
                   <td><StatusBadge status={r.status} /></td>
                   <td className="num">{fmt(r.result?.totalPoints)}</td>
+                  <td className="small">{r.gradeStructure.name}</td>
                   <td className="num">{r.result?.grade ?? '—'}</td>
                   <td>{r.result?.profile ?? '—'}</td>
                   <td className="small">{r.result?.complete ? [...r.result.checks, spreadFlag(r)].filter(Boolean).join('; ') || 'OK' : ''}</td>
                 </tr>
               ))}
-              {!tableRows.length && <tr><td colSpan={10} className="muted">No jobs match the current slicers.</td></tr>}
+              {!tableRows.length && <tr><td colSpan={11} className="muted">No jobs match the current slicers.</td></tr>}
             </tbody>
           </table>
         </div>

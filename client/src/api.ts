@@ -21,6 +21,7 @@ export interface Evaluation {
   position: { id: number; code: string; title: string; jobFamily: string; jobDescription: string };
   company: { id: number; name: string };
   department: { id: number; name: string };
+  gradeStructure: StructureRef;
   evaluator: { id: number; name: string } | null;
   assignedBy: string | null;
   status: Status;
@@ -61,6 +62,7 @@ export interface JobRecord {
   position: Evaluation['position'];
   company: { id: number; name: string };
   department: { id: number; name: string };
+  gradeStructure: StructureRef;
   mode: 'single' | 'multi';
   evaluationId: number | null;
   evaluators: { id: number | null; name: string }[];
@@ -102,6 +104,28 @@ export interface OrgUser {
 export interface Company {
   id: number;
   name: string;
+  defaultStructureId: number | null;
+}
+
+/** Which grade structure grades a job, and why. */
+export interface StructureRef {
+  id: number;
+  name: string;
+  source: 'position' | 'company' | 'organisation';
+}
+
+export interface GradeStructure {
+  id: number;
+  name: string;
+  description: string;
+  isDefault: boolean;
+  bands: GradeBand[];
+  /** Companies that use this structure as their default. */
+  companyIds: number[];
+  /** Positions graded by this structure (assigned directly or by default). */
+  positionCount: number;
+  /** Positions assigned to it directly. */
+  explicitCount: number;
 }
 export interface Department {
   id: number;
@@ -120,6 +144,8 @@ export interface Position {
   departmentId: number;
   departmentName: string;
   evaluations: number;
+  gradeStructureId: number | null;
+  gradeStructure: StructureRef;
 }
 
 export interface JdAnalysis {
@@ -144,6 +170,7 @@ export interface SavedAnalysis {
   userRole: Role;
   analysis: JdAnalysis;
   score: EvaluationResult;
+  gradeStructure: { id: number; name: string };
 }
 
 export class ApiError extends Error {

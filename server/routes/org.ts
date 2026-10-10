@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { requireRole } from '../auth';
 import type { DB } from '../db';
 import { HttpError, body, idParam, me } from '../http';
+import { loadStructures, resolveStructure } from '../structures';
 
 const roleEnum = z.enum(['admin', 'evaluator', 'management']);
 
@@ -80,7 +81,7 @@ export function orgRoutes(db: DB) {
 
   // --------------------------------------------------------------- companies
   r.get('/companies', anyone, (req, res) => {
-    res.json(db.prepare('SELECT id, name FROM companies WHERE org_id = ? ORDER BY name').all(me(req).orgId));
+    res.json(db.prepare('SELECT id, name, default_structure_id AS defaultStructureId FROM companies WHERE org_id = ? ORDER BY name').all(me(req).orgId));
   });
 
   r.post('/companies', admin, (req, res) => {
@@ -163,7 +164,15 @@ export function orgRoutes(db: DB) {
     jobDescription: z.string().max(50_000).default(''),
     companyId: z.number().int(),
     departmentId: z.number().int(),
+    /** null = automatic (company default, else organisation default); absent = unchanged on edit. */
+    gradeStructureId: z.number().int().nullable().optional(),
   });
+
+  const checkStructure = (orgId: number, id: number | null | undefined) => {
+    if (id && !db.prepare('SELECT 1 FROM grade_structures WHERE id = ? AND org_id = ?').get(id, orgId)) {
+      throw new HttpError(400, 'Unknown grade structure');
+    }
+  };
 
   const checkDept = (orgId: number, companyId: number, departmentId: number) => {
     owned('companies', companyId, orgId);
@@ -172,28 +181,36 @@ export function orgRoutes(db: DB) {
   };
 
   r.get('/positions', requireRole('admin', 'management'), (req, res) => {
+    const structures = loadStructures(db, me(req).orgId);
     res.json(
       db
         .prepare(
           `SELECT p.id, p.code, p.title, p.job_family AS jobFamily, p.job_description AS jobDescription,
                   p.company_id AS companyId, c.name AS companyName, p.department_id AS departmentId, d.name AS departmentName,
+                  p.grade_structure_id AS gradeStructureId,
                   (SELECT COUNT(*) FROM evaluations e WHERE e.position_id = p.id) AS evaluations
            FROM positions p JOIN companies c ON c.id = p.company_id JOIN departments d ON d.id = p.department_id
            WHERE p.org_id = ? ORDER BY p.code`,
         )
-        .all(me(req).orgId),
+        .all(me(req).orgId)
+        .map((p) => {
+          const row = p as { gradeStructureId: number | null; companyId: number };
+          const { structure, source } = resolveStructure(structures, row.gradeStructureId, row.companyId);
+          return { ...row, gradeStructure: { id: structure.id, name: structure.name, source } };
+        }),
     );
   });
 
   const insertPosition = (orgId: number, p: z.infer<typeof positionSchema>) => {
     checkDept(orgId, p.companyId, p.departmentId);
+    checkStructure(orgId, p.gradeStructureId);
     try {
       return Number(
         db
           .prepare(
-            'INSERT INTO positions (org_id, company_id, department_id, code, title, job_family, job_description) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO positions (org_id, company_id, department_id, code, title, job_family, job_description, grade_structure_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
           )
-          .run(orgId, p.companyId, p.departmentId, p.code, p.title, p.jobFamily, p.jobDescription).lastInsertRowid,
+          .run(orgId, p.companyId, p.departmentId, p.code, p.title, p.jobFamily, p.jobDescription, p.gradeStructureId ?? null).lastInsertRowid,
       );
     } catch {
       throw new HttpError(409, `Position code ${p.code} already exists`);
@@ -206,8 +223,9 @@ export function orgRoutes(db: DB) {
   });
 
   /**
-   * Bulk import rows of {code, title, company, department, jobFamily, jobDescription}.
-   * Companies and departments are created on the fly.
+   * Bulk import rows of {code, title, company, department, jobFamily, jobDescription, gradeStructure}.
+   * Companies and departments are created on the fly; gradeStructure must name an existing
+   * structure (blank = automatic).
    */
   r.post('/positions/import', admin, (req, res) => {
     const rows = body(
@@ -220,10 +238,16 @@ export function orgRoutes(db: DB) {
           department: z.string().trim().min(1).max(120),
           jobFamily: z.string().trim().max(120).default(''),
           jobDescription: z.string().max(50_000).default(''),
+          gradeStructure: z.string().trim().max(80).default(''),
         }),
       ).max(2000),
     );
     const orgId = me(req).orgId;
+    const structureIds = new Map(
+      (db.prepare('SELECT id, name FROM grade_structures WHERE org_id = ?').all(orgId) as { id: number; name: string }[]).map((x) => [x.name.toLowerCase(), x.id]),
+    );
+    const unknown = [...new Set(rows.map((r) => r.gradeStructure).filter((n) => n && !structureIds.has(n.toLowerCase())))];
+    if (unknown.length) throw new HttpError(400, `Unknown grade structure: ${unknown.join(', ')}. Create it first or leave the column blank.`);
     const result = db.transaction(() => {
       let created = 0;
       const skipped: string[] = [];
@@ -237,8 +261,8 @@ export function orgRoutes(db: DB) {
           continue;
         }
         db.prepare(
-          'INSERT INTO positions (org_id, company_id, department_id, code, title, job_family, job_description) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        ).run(orgId, c.id, d.id, row.code, row.title, row.jobFamily, row.jobDescription);
+          'INSERT INTO positions (org_id, company_id, department_id, code, title, job_family, job_description, grade_structure_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        ).run(orgId, c.id, d.id, row.code, row.title, row.jobFamily, row.jobDescription, row.gradeStructure ? structureIds.get(row.gradeStructure.toLowerCase())! : null);
         created++;
       }
       return { created, skipped };
@@ -252,10 +276,12 @@ export function orgRoutes(db: DB) {
     owned('positions', id, orgId);
     const b = body(req, positionSchema);
     checkDept(orgId, b.companyId, b.departmentId);
+    checkStructure(orgId, b.gradeStructureId);
     try {
       db.prepare(
         'UPDATE positions SET code = ?, title = ?, job_family = ?, job_description = ?, company_id = ?, department_id = ? WHERE id = ?',
       ).run(b.code, b.title, b.jobFamily, b.jobDescription, b.companyId, b.departmentId, id);
+      if (b.gradeStructureId !== undefined) db.prepare('UPDATE positions SET grade_structure_id = ? WHERE id = ?').run(b.gradeStructureId, id);
     } catch {
       throw new HttpError(409, `Position code ${b.code} already exists`);
     }

@@ -4,9 +4,9 @@ import type { EvaluationResult } from '../../../shared/engine';
 import { JD_FILE_ACCEPT, api, extractJdFile, type Company, type Department, type Evaluation, type JdAnalysis, type Position, type SavedAnalysis } from '../api';
 import { EvaluationForm, ResultStrip } from '../components/EvaluationForm';
 import { ErrorAlert, Modal, fmt, fmtDate } from '../components/ui';
-import { useData, useUser } from '../hooks';
+import { useData, useStructures, useUser } from '../hooks';
 
-type Outcome = { id: number; analysis: JdAnalysis; result: EvaluationResult; title: string };
+type Outcome = { id: number; analysis: JdAnalysis; result: EvaluationResult; title: string; gradeStructure?: { id: number; name: string } };
 
 function CommitModal({ outcome, onClose }: { outcome: Outcome; onClose: () => void }) {
   const user = useUser();
@@ -16,7 +16,13 @@ function CommitModal({ outcome, onClose }: { outcome: Outcome; onClose: () => vo
   const departments = useData<Department[]>('/departments');
   const [mode, setMode] = useState<'new' | 'existing'>('new');
   const [positionId, setPositionId] = useState<number | ''>('');
-  const [p, setP] = useState({ code: '', title: outcome.title, jobFamily: outcome.analysis.suggested.jobFamily, companyId: 0, departmentId: 0 });
+  const { structures } = useStructures();
+  // Keep the structure the analysis was graded with, unless it is the organisation default (then "automatic").
+  const analysedWith = structures.find((s) => s.id === outcome.gradeStructure?.id);
+  const [p, setP] = useState({
+    code: '', title: outcome.title, jobFamily: outcome.analysis.suggested.jobFamily, companyId: 0, departmentId: 0,
+    gradeStructureId: analysedWith && !analysedWith.isDefault ? analysedWith.id : (null as number | null),
+  });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const depts = (departments.data ?? []).filter((d) => d.companyId === p.companyId);
@@ -68,6 +74,12 @@ function CommitModal({ outcome, onClose }: { outcome: Outcome; onClose: () => vo
             <select value={p.departmentId} onChange={(e) => setP({ ...p, departmentId: Number(e.target.value) })} disabled={!p.companyId}>
               <option value={0}>Choose…</option>
               {depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          </label>
+          <label className="field">Grade structure
+            <select value={p.gradeStructureId ?? ''} onChange={(e) => setP({ ...p, gradeStructureId: e.target.value ? Number(e.target.value) : null })}>
+              <option value="">Automatic (company or organisation default)</option>
+              {structures.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </label>
         </div>
@@ -125,6 +137,8 @@ export default function JdAnalyzerPage() {
   const [title, setTitle] = useState('');
   const [text, setText] = useState('');
   const [method, setMethod] = useState<'auto' | 'ai' | 'rules'>('auto');
+  const { structures } = useStructures();
+  const [structureId, setStructureId] = useState<number | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [committing, setCommitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -134,7 +148,10 @@ export default function JdAnalyzerPage() {
     setBusy(true);
     setError(null);
     try {
-      const r = await api.post<{ id: number; analysis: JdAnalysis; result: EvaluationResult }>('/jd/analyze', { title, text, method });
+      const r = await api.post<{ id: number; analysis: JdAnalysis; result: EvaluationResult; gradeStructure: { id: number; name: string } }>(
+        '/jd/analyze',
+        { title, text, method, structureId },
+      );
       setOutcome({ ...r, title: title || r.analysis.suggested.title });
       history.reload();
     } catch (e) {
@@ -199,6 +216,14 @@ export default function JdAnalyzerPage() {
               <option value="rules">Rule-based</option>
             </select>
           </label>
+          {structures.length > 1 && (
+            <label className="field">Grade with structure
+              <select value={structureId ?? ''} onChange={(e) => setStructureId(e.target.value ? Number(e.target.value) : null)}>
+                <option value="">{structures.find((s) => s.isDefault)?.name} (organisation default)</option>
+                {structures.filter((s) => !s.isDefault).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </label>
+          )}
           <label className="field">Load from file (Word, PDF or text)<input type="file" accept={JD_FILE_ACCEPT} disabled={reading} onChange={(e) => loadFile(e.target)} /></label>
         </div>
         {reading && <div className="alert info" style={{ marginTop: 12 }}>Reading file…</div>}
@@ -217,7 +242,10 @@ export default function JdAnalyzerPage() {
         <div className="card">
           <div className="row spread">
             <h2>Assessment: {outcome.title || 'Untitled job'}</h2>
-            <span className="badge b-neutral">{a.method === 'ai' ? `AI · ${a.model}` : 'Rule-based'} · {a.confidence} confidence</span>
+            <span className="row">
+              {outcome.gradeStructure && <span className="badge b-neutral">Graded on {outcome.gradeStructure.name}</span>}
+              <span className="badge b-neutral">{a.method === 'ai' ? `AI · ${a.model}` : 'Rule-based'} · {a.confidence} confidence</span>
+            </span>
           </div>
           <p>{a.summary}</p>
           {a.warnings.map((w) => <div key={w} className="small flag">⚠ {w}</div>)}
@@ -236,7 +264,7 @@ export default function JdAnalyzerPage() {
       <div className="card table-wrap">
         <h2>{user.role === 'evaluator' ? 'My analyses' : 'All analyses in the organisation'}</h2>
         <table>
-          <thead><tr><th>Date</th><th>Job</th><th>By</th><th>Method</th><th className="num">Points</th><th className="num">Grade</th><th>Linked position</th><th /></tr></thead>
+          <thead><tr><th>Date</th><th>Job</th><th>By</th><th>Method</th><th className="num">Points</th><th className="num">Grade</th><th>Structure</th><th>Linked position</th><th /></tr></thead>
           <tbody>
             {(history.data ?? []).map((h) => (
               <tr key={h.id}>
@@ -246,11 +274,12 @@ export default function JdAnalyzerPage() {
                 <td>{h.method === 'ai' ? 'AI' : 'Rules'}</td>
                 <td className="num">{fmt(h.score.totalPoints)}</td>
                 <td className="num">{h.score.grade ?? '—'}</td>
+                <td className="small">{h.gradeStructure.name}</td>
                 <td>{h.positionCode ?? <span className="muted">—</span>}</td>
-                <td><button className="ghost" onClick={() => { setTitle(h.title); setText(h.jdText); setOutcome({ id: h.id, analysis: h.analysis, result: h.score, title: h.title }); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>Open</button></td>
+                <td><button className="ghost" onClick={() => { setTitle(h.title); setText(h.jdText); setOutcome({ id: h.id, analysis: h.analysis, result: h.score, title: h.title, gradeStructure: h.gradeStructure }); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>Open</button></td>
               </tr>
             ))}
-            {!history.data?.length && <tr><td colSpan={8} className="muted">No analyses yet.</td></tr>}
+            {!history.data?.length && <tr><td colSpan={9} className="muted">No analyses yet.</td></tr>}
           </tbody>
         </table>
       </div>

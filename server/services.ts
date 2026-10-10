@@ -1,20 +1,6 @@
-import {
-  EMPTY_INPUTS,
-  type EvaluationInputs,
-  type GradeBand,
-  evaluate,
-  sortGrades,
-} from '../shared/engine';
+import { EMPTY_INPUTS, type EvaluationInputs, evaluate } from '../shared/engine';
 import type { DB } from './db';
-
-export function getGrades(db: DB, orgId: number): GradeBand[] {
-  const rows = db
-    .prepare(
-      'SELECT grade, min_points AS minPoints, career_level AS careerLevel, typical_roles AS typicalRoles FROM grades WHERE org_id = ? ORDER BY min_points',
-    )
-    .all(orgId) as GradeBand[];
-  return sortGrades(rows);
-}
+import { type StructureContext, loadStructures, resolveStructure } from './structures';
 
 export function parseInputs(json: string | null): EvaluationInputs | null {
   if (!json) return null;
@@ -54,6 +40,7 @@ interface EvalRow {
   created_at: string;
   updated_at: string;
   rater_count: number;
+  position_structure_id: number | null;
 }
 
 const BASE_SELECT = `
@@ -62,7 +49,8 @@ SELECT e.id, e.position_id, p.code AS position_code, p.title AS position_title, 
        e.evaluator_id, u.name AS evaluator_name, ab.name AS assigned_by_name, adj.name AS adjusted_by_name,
        e.status, e.due_date, e.instructions, e.inputs, e.rationale, e.source, e.adjusted_inputs,
        e.adjusted_at, e.review_comment, e.submitted_at, e.approved_at, e.created_at, e.updated_at,
-       (SELECT COUNT(*) FROM evaluations x WHERE x.position_id = e.position_id) AS rater_count
+       (SELECT COUNT(*) FROM evaluations x WHERE x.position_id = e.position_id) AS rater_count,
+       p.grade_structure_id AS position_structure_id
 FROM evaluations e
 JOIN positions p ON p.id = e.position_id
 JOIN companies c ON c.id = p.company_id
@@ -72,7 +60,9 @@ LEFT JOIN users ab ON ab.id = e.assigned_by
 LEFT JOIN users adj ON adj.id = e.adjusted_by
 `;
 
-function enrich(row: EvalRow, grades: GradeBand[]) {
+function enrich(row: EvalRow, ctx: StructureContext) {
+  const { structure, source } = resolveStructure(ctx, row.position_structure_id, row.company_id);
+  const grades = structure.bands;
   const inputs = parseInputs(row.inputs);
   const adjusted = parseInputs(row.adjusted_inputs);
   const effective = adjusted ?? inputs;
@@ -87,6 +77,8 @@ function enrich(row: EvalRow, grades: GradeBand[]) {
     },
     company: { id: row.company_id, name: row.company_name },
     department: { id: row.department_id, name: row.department_name },
+    /** The grade structure that grades this job, and why (position, company or organisation default). */
+    gradeStructure: { id: structure.id, name: structure.name, source },
     evaluator: row.evaluator_id ? { id: row.evaluator_id, name: row.evaluator_name } : null,
     assignedBy: row.assigned_by_name,
     status: row.status,
@@ -115,18 +107,18 @@ function enrich(row: EvalRow, grades: GradeBand[]) {
 export type EnrichedEvaluation = ReturnType<typeof enrich>;
 
 export function listEvaluations(db: DB, orgId: number, evaluatorId?: number): EnrichedEvaluation[] {
-  const grades = getGrades(db, orgId);
+  const ctx = loadStructures(db, orgId);
   const rows = (
     evaluatorId
       ? db.prepare(`${BASE_SELECT} WHERE e.org_id = ? AND e.evaluator_id = ? ORDER BY e.id DESC`).all(orgId, evaluatorId)
       : db.prepare(`${BASE_SELECT} WHERE e.org_id = ? ORDER BY e.id DESC`).all(orgId)
   ) as EvalRow[];
-  return rows.map((r) => enrich(r, grades));
+  return rows.map((r) => enrich(r, ctx));
 }
 
 export function getEvaluation(db: DB, orgId: number, id: number): EnrichedEvaluation | null {
   const row = db.prepare(`${BASE_SELECT} WHERE e.org_id = ? AND e.id = ?`).get(orgId, id) as EvalRow | undefined;
-  return row ? enrich(row, getGrades(db, orgId)) : null;
+  return row ? enrich(row, loadStructures(db, orgId)) : null;
 }
 
 export function logHistory(db: DB, evaluationId: number, userId: number, action: string, details: object = {}) {

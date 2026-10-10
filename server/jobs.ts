@@ -8,8 +8,9 @@
  */
 import { type Consensus, buildConsensus } from '../shared/consensus';
 import { type EvaluationInputs, type EvaluationResult, type GradeBand, evaluate } from '../shared/engine';
+import { loadStructures, structureForPosition } from './structures';
 import type { DB } from './db';
-import { type EnrichedEvaluation, getGrades, listEvaluations, parseInputs } from './services';
+import { type EnrichedEvaluation, listEvaluations, parseInputs } from './services';
 
 export interface CalibrationRow {
   id: number;
@@ -82,6 +83,7 @@ function buildJob(evals: EnrichedEvaluation[], cal: CalibrationRow | undefined, 
     position: first.position,
     company: first.company,
     department: first.department,
+    gradeStructure: first.gradeStructure,
     mode: multi ? ('multi' as const) : ('single' as const),
     evaluationId: multi ? null : first.id,
     evaluators,
@@ -117,14 +119,14 @@ export type JobRecord = ReturnType<typeof buildJob>;
 
 /** Every position that has at least one evaluation. */
 export function listJobs(db: DB, orgId: number): JobRecord[] {
-  const grades = getGrades(db, orgId);
+  const ctx = loadStructures(db, orgId);
   const cals = loadCalibrations(db, orgId);
   const byPos = new Map<number, EnrichedEvaluation[]>();
   for (const e of listEvaluations(db, orgId).reverse()) {
     byPos.set(e.position.id, [...(byPos.get(e.position.id) ?? []), e]);
   }
   return [...byPos.values()]
-    .map((evals) => buildJob(evals, cals.get(evals[0].position.id), grades))
+    .map((evals) => buildJob(evals, cals.get(evals[0].position.id), ctx.byId.get(evals[0].gradeStructure.id)!.bands))
     .sort((a, b) => a.position.code.localeCompare(b.position.code));
 }
 
@@ -133,7 +135,7 @@ export function getJob(db: DB, orgId: number, positionId: number) {
     .filter((e) => e.position.id === positionId)
     .reverse();
   if (!evals.length) return null;
-  const job = buildJob(evals, loadCalibrations(db, orgId, positionId).get(positionId), getGrades(db, orgId));
+  const job = buildJob(evals, loadCalibrations(db, orgId, positionId).get(positionId), structureForPosition(db, orgId, positionId).structure.bands);
   return { ...job, evaluations: evals };
 }
 
@@ -156,5 +158,5 @@ export function approvedCalibration(db: DB, orgId: number, positionId: number) {
     .get(orgId, positionId) as { final_inputs: string; comment: string; approved_at: string } | undefined;
   const inputs = row ? parseInputs(row.final_inputs) : null;
   if (!row || !inputs) return null;
-  return { inputs, result: evaluate(inputs, getGrades(db, orgId)), comment: row.comment, approvedAt: row.approved_at };
+  return { inputs, result: evaluate(inputs, structureForPosition(db, orgId, positionId).structure.bands), comment: row.comment, approvedAt: row.approved_at };
 }

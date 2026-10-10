@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Evaluation, JobRecord } from '../api';
 import { STATUS_LABEL } from './ui';
 
-export type Dim = 'company' | 'department' | 'role' | 'family' | 'grade' | 'career' | 'status' | 'evaluator';
+export type Dim = 'company' | 'department' | 'role' | 'family' | 'structure' | 'grade' | 'career' | 'status' | 'evaluator';
 export type Filters = Partial<Record<Dim, string[]>>;
 
 export const DIM_LABEL: Record<Dim, string> = {
@@ -10,6 +10,7 @@ export const DIM_LABEL: Record<Dim, string> = {
   department: 'Department',
   role: 'Role',
   family: 'Job family',
+  structure: 'Grade structure',
   grade: 'Grade',
   career: 'Career level',
   status: 'Status',
@@ -36,7 +37,9 @@ export function dimValue(e: SliceRow, d: Dim): string {
     case 'department': return `${e.department.name}`;
     case 'role': return e.position.title;
     case 'family': return e.position.jobFamily || NONE;
-    case 'grade': return e.result?.grade != null ? String(e.result.grade) : 'Ungraded';
+    case 'structure': return e.gradeStructure.name;
+    // Grade numbers only mean something within their structure, so the value carries both.
+    case 'grade': return e.result?.grade != null ? `${e.gradeStructure.name} · G${e.result.grade}` : 'Ungraded';
     case 'career': return e.result?.careerLevel || 'Ungraded';
     case 'status': return e.status;
     case 'evaluator': return evaluatorNames(e).join(', ');
@@ -49,10 +52,9 @@ export function applyFilters<T extends SliceRow>(rows: T[], f: Filters, except?:
   );
 }
 
-const sortValues = (d: Dim, vals: string[]) =>
-  d === 'grade'
-    ? vals.sort((a, b) => (Number(a) || 999) - (Number(b) || 999))
-    : vals.sort((a, b) => a.localeCompare(b));
+// Numeric-aware so "Standard · G9" sorts before "Standard · G10"; "Ungraded" last.
+const sortValues = (_d: Dim, vals: string[]) =>
+  vals.sort((a, b) => (a === 'Ungraded' ? 1 : b === 'Ungraded' ? -1 : a.localeCompare(b, undefined, { numeric: true })));
 
 function Slicer({
   dim,
@@ -85,7 +87,7 @@ function Slicer({
     return () => document.removeEventListener('mousedown', close);
   }, []);
 
-  const label = (v: string) => (dim === 'status' ? STATUS_LABEL[v as keyof typeof STATUS_LABEL] ?? v : dim === 'grade' && v !== 'Ungraded' ? `Grade ${v}` : v);
+  const label = (v: string) => (dim === 'status' ? STATUS_LABEL[v as keyof typeof STATUS_LABEL] ?? v : v);
   const toggle = (v: string) => onChange(selected.includes(v) ? selected.filter((s) => s !== v) : [...selected, v]);
 
   return (
@@ -121,7 +123,7 @@ export function SlicerBar({
   rows,
   filters,
   onChange,
-  dims = ['company', 'department', 'role', 'grade', 'family', 'career', 'status', 'evaluator'],
+  dims = ['company', 'department', 'role', 'structure', 'grade', 'family', 'career', 'status', 'evaluator'],
 }: {
   rows: SliceRow[];
   filters: Filters;

@@ -1,5 +1,5 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from 'react';
-import { api, type Organization, type User } from './api';
+import { api, type GradeBand, type GradeStructure, type Organization, type User } from './api';
 
 export function useData<T>(url: string | null) {
   const [data, setData] = useState<T | null>(null);
@@ -76,4 +76,13 @@ export function useUser(): User {
   const { user } = useAuth();
   if (!user) throw new Error('No user');
   return user;
+}
+
+/** All grade structures of the organisation, with a lookup for a structure's bands. */
+export function useStructures() {
+  const q = useData<{ structures: GradeStructure[]; defaults: GradeBand[] }>('/grade-structures');
+  const structures = q.data?.structures ?? [];
+  const bandsFor = (id: number | undefined | null): GradeBand[] | null =>
+    q.data ? (structures.find((s) => s.id === id) ?? structures.find((s) => s.isDefault))?.bands ?? null : null;
+  return { ...q, structures, bandsFor };
 }

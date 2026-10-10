@@ -1,15 +1,18 @@
 import { useMemo, useState } from 'react';
 import { JD_FILE_ACCEPT, api, extractJdFile, type Company, type Department, type Position } from '../api';
 import { ErrorAlert, Modal, downloadCsv, parseCsv } from '../components/ui';
-import { useData } from '../hooks';
+import { useData, useStructures } from '../hooks';
 
-type Form = { code: string; title: string; jobFamily: string; jobDescription: string; companyId: number; departmentId: number };
-const EMPTY: Form = { code: '', title: '', jobFamily: '', jobDescription: '', companyId: 0, departmentId: 0 };
+type Form = { code: string; title: string; jobFamily: string; jobDescription: string; companyId: number; departmentId: number; gradeStructureId: number | null };
+const EMPTY: Form = { code: '', title: '', jobFamily: '', jobDescription: '', companyId: 0, departmentId: 0, gradeStructureId: null };
 
 function PositionModal({ initial, id, onClose, onSaved }: { initial: Form; id?: number; onClose: () => void; onSaved: () => void }) {
   const companies = useData<Company[]>('/companies');
   const departments = useData<Department[]>('/departments');
+  const { structures } = useStructures();
   const [f, setF] = useState(initial);
+  const company = (companies.data ?? []).find((c) => c.id === f.companyId);
+  const automatic = structures.find((s) => s.id === company?.defaultStructureId) ?? structures.find((s) => s.isDefault);
   const [error, setError] = useState<string | null>(null);
   const depts = (departments.data ?? []).filter((d) => d.companyId === f.companyId);
   const save = async () => {
@@ -41,6 +44,12 @@ function PositionModal({ initial, id, onClose, onSaved }: { initial: Form; id?: 
             {depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
         </label>
+        <label className="field">Grade structure
+          <select value={f.gradeStructureId ?? ''} onChange={(e) => setF({ ...f, gradeStructureId: e.target.value ? Number(e.target.value) : null })}>
+            <option value="">Automatic{automatic ? ` (${automatic.name})` : ''}</option>
+            {structures.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </label>
       </div>
       <div className="row spread" style={{ marginTop: 12 }}>
         <span className="field">Job description</span>
@@ -70,7 +79,7 @@ function PositionModal({ initial, id, onClose, onSaved }: { initial: Form; id?: 
   );
 }
 
-const IMPORT_HEADERS = ['code', 'title', 'company', 'department', 'jobFamily', 'jobDescription'];
+const IMPORT_HEADERS = ['code', 'title', 'company', 'department', 'jobFamily', 'jobDescription', 'gradeStructure'];
 
 function ImportModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: string) => void }) {
   const [text, setText] = useState('');
@@ -95,11 +104,11 @@ function ImportModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: s
 
   return (
     <Modal title="Import positions from CSV" onClose={onClose}>
-      <p className="small muted">Columns: <code>{IMPORT_HEADERS.join(', ')}</code>. Missing companies and departments are created automatically; existing codes are skipped.</p>
+      <p className="small muted">Columns: <code>{IMPORT_HEADERS.join(', ')}</code>. Missing companies and departments are created automatically; existing codes are skipped. <code>gradeStructure</code> is optional: the name of an existing structure, or blank for automatic.</p>
       <ErrorAlert error={error} />
       <div className="row" style={{ marginBottom: 8 }}>
         <input type="file" accept=".csv,text/csv" onChange={async (e) => { const f = e.target.files?.[0]; if (f) setText(await f.text()); }} />
-        <button className="ghost" onClick={() => downloadCsv('positions-template.csv', [IMPORT_HEADERS, ['FIN-01', 'Accounts Assistant', 'Acme Ltd', 'Finance', 'Finance', 'Processes invoices…']])}>Download template</button>
+        <button className="ghost" onClick={() => downloadCsv('positions-template.csv', [IMPORT_HEADERS, ['FIN-01', 'Accounts Assistant', 'Acme Ltd', 'Finance', 'Finance', 'Processes invoices…', '']])}>Download template</button>
       </div>
       <textarea rows={8} value={text} onChange={(e) => setText(e.target.value)} placeholder="…or paste CSV here" />
       <div className="row spread" style={{ marginTop: 12 }}>
@@ -136,15 +145,16 @@ export default function PositionsPage() {
       <div className="card table-wrap">
         <input placeholder="Search…" value={q} onChange={(e) => setQ(e.target.value)} style={{ marginBottom: 12, width: 280 }} />
         <table>
-          <thead><tr><th>Code</th><th>Role</th><th>Job family</th><th>Company</th><th>Department</th><th>JD</th><th className="num">Evaluations</th><th /></tr></thead>
+          <thead><tr><th>Code</th><th>Role</th><th>Job family</th><th>Company</th><th>Department</th><th>Grade structure</th><th>JD</th><th className="num">Evaluations</th><th /></tr></thead>
           <tbody>
             {list.map((p) => (
               <tr key={p.id}>
                 <td>{p.code}</td><td>{p.title}</td><td>{p.jobFamily}</td><td>{p.companyName}</td><td>{p.departmentName}</td>
+                <td className="small">{p.gradeStructure.name}{p.gradeStructure.source !== 'position' && <span className="muted"> (auto)</span>}</td>
                 <td className="small muted">{p.jobDescription ? `${p.jobDescription.trim().split(/\s+/).length} words` : '—'}</td>
                 <td className="num">{p.evaluations}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>
-                  <button className="ghost" onClick={() => setEditing({ id: p.id, form: { code: p.code, title: p.title, jobFamily: p.jobFamily, jobDescription: p.jobDescription, companyId: p.companyId, departmentId: p.departmentId } })}>Edit</button>
+                  <button className="ghost" onClick={() => setEditing({ id: p.id, form: { code: p.code, title: p.title, jobFamily: p.jobFamily, jobDescription: p.jobDescription, companyId: p.companyId, departmentId: p.departmentId, gradeStructureId: p.gradeStructureId } })}>Edit</button>
                   <button className="ghost danger" onClick={async () => {
                     if (!confirm(`Delete ${p.code}${p.evaluations ? ` and its ${p.evaluations} evaluation(s)` : ''}?`)) return;
                     try { await api.del(`/positions/${p.id}`); positions.reload(); } catch (e) { setError((e as Error).message); }
@@ -152,7 +162,7 @@ export default function PositionsPage() {
                 </td>
               </tr>
             ))}
-            {!list.length && <tr><td colSpan={8} className="muted">No positions.</td></tr>}
+            {!list.length && <tr><td colSpan={9} className="muted">No positions.</td></tr>}
           </tbody>
         </table>
       </div>

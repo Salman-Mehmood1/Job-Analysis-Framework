@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { EMPTY_INPUTS, evaluate, inputsComplete } from '../../../shared/engine';
-import { api, type Evaluation, type EvaluationInputs, type GradeBand, type JdAnalysis } from '../api';
+import { api, type Evaluation, type EvaluationInputs, type JdAnalysis } from '../api';
 import { EvaluationForm, ResultStrip } from '../components/EvaluationForm';
 import { ErrorAlert, StatusBadge, fmt, fmtDate } from '../components/ui';
-import { useData } from '../hooks';
+import { useData, useStructures } from '../hooks';
 
 export default function EvaluatePage() {
   const { id } = useParams();
   const ev = useData<Evaluation>(`/evaluations/${id}`);
-  const grades = useData<{ grades: GradeBand[] }>('/grades');
+  const structures = useStructures();
   const [inputs, setInputs] = useState<EvaluationInputs>({ ...EMPTY_INPUTS });
   const [rationale, setRationale] = useState('');
   const [source, setSource] = useState<'manual' | 'jd_analysis'>('manual');
@@ -27,7 +27,8 @@ export default function EvaluatePage() {
     }
   }, [e]);
 
-  const result = useMemo(() => (grades.data ? evaluate(inputs, grades.data.grades) : null), [inputs, grades.data]);
+  const bands = structures.bandsFor(ev.data?.gradeStructure.id);
+  const result = useMemo(() => (bands ? evaluate(inputs, bands) : null), [inputs, bands]);
   const editable = e && ['assigned', 'in_progress', 'returned'].includes(e.status);
   const dirty = e && (JSON.stringify(inputs) !== JSON.stringify(e.inputs ?? EMPTY_INPUTS) || rationale !== e.rationale);
 
@@ -79,7 +80,7 @@ export default function EvaluatePage() {
 
   if (ev.error) return <ErrorAlert error={ev.error} />;
   if (!e) return <div className="muted">Loading…</div>;
-  const suggestedResult = suggestion && grades.data ? evaluate(suggestion.inputs, grades.data.grades) : null;
+  const suggestedResult = suggestion && bands ? evaluate(suggestion.inputs, bands) : null;
 
   return (
     <div>
@@ -91,6 +92,7 @@ export default function EvaluatePage() {
             <StatusBadge status={e.status} />
             <span className="muted">{e.company.name} / {e.department.name}</span>
             {e.dueDate && <span className="muted">· due {fmtDate(e.dueDate)}</span>}
+            <span className="muted">· graded on the {e.gradeStructure.name} structure</span>
           </div>
         </div>
         {editable && (

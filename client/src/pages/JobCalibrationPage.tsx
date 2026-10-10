@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ELEMENT_KEYS, ELEMENT_LABEL } from '../../../shared/consensus';
 import { evaluate, inputsComplete } from '../../../shared/engine';
-import { api, type EvaluationInputs, type GradeBand, type JobDetail } from '../api';
+import { api, type EvaluationInputs, type JobDetail } from '../api';
 import { EvaluationForm, ResultStrip } from '../components/EvaluationForm';
 import { BASIS_LABEL, rangeFlag, spreadFlag } from '../components/JobBits';
 import { ErrorAlert, Modal, StatusBadge, fmt, fmtDate } from '../components/ui';
-import { useData, useUser } from '../hooks';
+import { useData, useStructures, useUser } from '../hooks';
 
 const show = (v: string | undefined) => (v === undefined ? '' : v === '' ? '–' : v);
 
@@ -16,7 +16,7 @@ export default function JobCalibrationPage() {
   const isMgmt = user.role === 'management';
   const panel = user.role === 'admin' ? '/admin' : '/management';
   const job = useData<JobDetail>(`/jobs/${positionId}`);
-  const grades = useData<{ grades: GradeBand[] }>('/grades');
+  const structures = useStructures();
   const [draft, setDraft] = useState<EvaluationInputs | null>(null);
   const [comment, setComment] = useState('');
   const [returning, setReturning] = useState<{ id: number; name: string } | null>(null);
@@ -36,7 +36,8 @@ export default function JobCalibrationPage() {
     }
   }, [j]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const draftResult = useMemo(() => (draft && grades.data ? evaluate(draft, grades.data.grades) : null), [draft, grades.data]);
+  const bands = structures.bandsFor(job.data?.gradeStructure.id);
+  const draftResult = useMemo(() => (draft && bands ? evaluate(draft, bands) : null), [draft, bands]);
   const dirty = !!draft && JSON.stringify(draft) !== JSON.stringify(saved);
   const commentDirty = j && comment !== (j.calibration?.comment ?? '');
 
@@ -56,7 +57,7 @@ export default function JobCalibrationPage() {
   };
 
   if (job.error) return <ErrorAlert error={job.error} />;
-  if (!j || !grades.data) return <div className="muted">Loading…</div>;
+  if (!j || !bands) return <div className="muted">Loading…</div>;
   if (j.mode !== 'multi') {
     return (
       <div className="card">
@@ -83,6 +84,7 @@ export default function JobCalibrationPage() {
             <StatusBadge status={j.status} />
             <span className="badge b-neutral">{BASIS_LABEL[j.basis]}</span>
             <span className="muted">{j.company.name} / {j.department.name} · {j.evaluationCount} evaluators, {rated.length} submitted</span>
+            <span className="badge b-neutral">{j.gradeStructure.name}</span>
           </div>
         </div>
         {isMgmt && (
@@ -167,7 +169,7 @@ export default function JobCalibrationPage() {
                 <tr key={k}>
                   <td className="small"><strong>{{ khPoints: 'Know-How pts', psPoints: 'Problem Solving pts', acPoints: 'Accountability pts', totalPoints: 'Total points' }[k]}</strong></td>
                   {rated.map((e) => <td key={e.id} className="num">{fmt(e.originalResult![k])}</td>)}
-                  <td className="num"><strong>{fmt(consensus && grades.data ? evaluate(consensus.inputs, grades.data.grades)[k] : null)}</strong></td>
+                  <td className="num"><strong>{fmt(consensus ? evaluate(consensus.inputs, bands)[k] : null)}</strong></td>
                   <td />
                   {(j.calibration?.adjustedInputs || approved) && <td className="num">{fmt(j.result?.[k])}</td>}
                 </tr>
@@ -175,7 +177,7 @@ export default function JobCalibrationPage() {
               <tr>
                 <td className="small"><strong>Grade</strong></td>
                 {rated.map((e) => <td key={e.id} className="num">{e.originalResult!.grade ?? '—'}</td>)}
-                <td className="num"><strong>{consensus && grades.data ? evaluate(consensus.inputs, grades.data.grades).grade ?? '—' : '—'}</strong></td>
+                <td className="num"><strong>{consensus ? evaluate(consensus.inputs, bands).grade ?? '—' : '—'}</strong></td>
                 <td />
                 {(j.calibration?.adjustedInputs || approved) && <td className="num">{j.result?.grade ?? '—'}</td>}
               </tr>

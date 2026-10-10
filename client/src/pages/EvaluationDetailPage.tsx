@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { EMPTY_INPUTS, evaluate, inputsComplete } from '../../../shared/engine';
-import { api, type Evaluation, type EvaluationInputs, type GradeBand, type OrgUser } from '../api';
+import { api, type Evaluation, type EvaluationInputs, type OrgUser } from '../api';
 import { EvaluationForm, ResultStrip } from '../components/EvaluationForm';
 import { ErrorAlert, StatusBadge, fmt, fmtDate } from '../components/ui';
-import { useData, useUser } from '../hooks';
+import { useData, useStructures, useUser } from '../hooks';
 
 const ACTION_LABEL: Record<string, string> = {
   assigned: 'Assigned',
@@ -34,7 +34,7 @@ export default function EvaluationDetailPage() {
   const nav = useNavigate();
   const isMgmt = user.role === 'management';
   const ev = useData<Evaluation>(`/evaluations/${id}`);
-  const grades = useData<{ grades: GradeBand[] }>('/grades');
+  const structures = useStructures();
   const users = useData<OrgUser[]>(user.role === 'admin' ? '/users' : null);
   const [draft, setDraft] = useState<EvaluationInputs | null>(null);
   const [comment, setComment] = useState('');
@@ -52,7 +52,8 @@ export default function EvaluationDetailPage() {
 
   const multi = (e?.raterCount ?? 1) > 1;
   const reviewable = isMgmt && e && !multi && ['submitted', 'approved'].includes(e.status);
-  const draftResult = useMemo(() => (draft && grades.data ? evaluate(draft, grades.data.grades) : null), [draft, grades.data]);
+  const bands = structures.bandsFor(ev.data?.gradeStructure.id);
+  const draftResult = useMemo(() => (draft && bands ? evaluate(draft, bands) : null), [draft, bands]);
   const dirty = draft && e && JSON.stringify(draft) !== JSON.stringify(e.adjustedInputs ?? e.inputs);
 
   const run = async (fn: () => Promise<Evaluation | unknown>, msg: string) => {
@@ -86,6 +87,7 @@ export default function EvaluationDetailPage() {
             <StatusBadge status={e.status} />
             <span className="muted">{e.company.name} / {e.department.name}</span>
             {e.position.jobFamily && <span className="muted">· {e.position.jobFamily}</span>}
+            <span className="badge b-neutral" title={`Grade structure (${e.gradeStructure.source === 'position' ? 'assigned to this position' : e.gradeStructure.source === 'company' ? 'company default' : 'organisation default'})`}>{e.gradeStructure.name}</span>
             {e.source === 'jd_analysis' && <span className="badge b-neutral">from JD analysis</span>}
           </div>
         </div>

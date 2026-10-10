@@ -34,7 +34,7 @@ export function createApp(db: DB, opts: { staticDir?: string } = {}) {
   app.use('/api/auth', authRoutes(db));
   app.use('/api', orgRoutes(db));
   app.use('/api/evaluations', evaluationRoutes(db));
-  app.use('/api/grades', gradeRoutes(db));
+  app.use('/api/grade-structures', gradeRoutes(db));
   app.use('/api/jd', jdRoutes(db));
   app.use('/api/jobs', jobRoutes(db));
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));

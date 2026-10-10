@@ -39,7 +39,7 @@ describe('roles and visibility', () => {
   it('evaluators cannot assign or edit grades', async () => {
     const ev = await login('evaluator@demo.com');
     await ev.post('/api/evaluations').send({ positionIds: [1], evaluatorId: 3 }).expect(403);
-    await ev.put('/api/grades').send([]).expect(403);
+    await ev.post('/api/grade-structures').send({ name: 'X' }).expect(403);
   });
 
   it('organisations are isolated', async () => {
@@ -91,31 +91,95 @@ describe('evaluation workflow', () => {
   });
 });
 
-describe('grade structure', () => {
-  it('changing grades re-grades evaluations immediately', async () => {
+describe('grade structures', () => {
+  type Ev = { position: { code: string }; result: { grade: number; careerLevel: string }; gradeStructure: { name: string; source: string } };
+  const find = (list: Ev[], code: string) => list.find((e) => e.position.code === code)!;
+
+  it('grades each job with its own structure: position, then company default, then organisation default', async () => {
     const mg = await login('management@demo.com');
-    const before = (await mg.get('/api/evaluations')).body.find((e: { position: { code: string } }) => e.position.code === 'FIN-10');
-    expect(before.result.grade).toBe(15);
-    const grades = [
-      { grade: 1, minPoints: 0, careerLevel: 'Junior', typicalRoles: '' },
-      { grade: 2, minPoints: 500, careerLevel: 'Middle', typicalRoles: '' },
-      { grade: 3, minPoints: 1000, careerLevel: 'Senior', typicalRoles: '' },
-    ];
-    await mg.put('/api/grades').send(grades).expect(200);
-    const after = (await mg.get('/api/evaluations')).body.find((e: { position: { code: string } }) => e.position.code === 'FIN-10');
-    expect(after.result.grade).toBe(3);
-    expect(after.result.careerLevel).toBe('Senior');
+    const list = (await mg.get('/api/evaluations')).body as Ev[];
+    expect(find(list, 'FIN-10').gradeStructure).toEqual(expect.objectContaining({ name: 'Standard', source: 'organisation' }));
+    expect(find(list, 'FIN-10').result.grade).toBe(15);
+    expect(find(list, 'OPS-05').gradeStructure).toEqual(expect.objectContaining({ name: 'Blue collar', source: 'position' }));
+    expect(find(list, 'IT-04').gradeStructure).toEqual(expect.objectContaining({ name: 'Acme Services', source: 'company' }));
+    // a position assignment beats the company default
+    expect(find(list, 'ADM-01').gradeStructure).toEqual(expect.objectContaining({ name: 'Blue collar', source: 'position' }));
+    expect(find(list, 'IT-04').result.careerLevel).toBe('Senior professional'); // 485 pts in Acme Services bands
   });
 
-  it('rejects non-ascending bands', async () => {
+  it('editing one structure re-grades only the jobs that use it', async () => {
+    const mg = await login('management@demo.com');
+    const { structures } = (await mg.get('/api/grade-structures')).body;
+    const standard = structures.find((x: { name: string }) => x.name === 'Standard');
+    expect(standard.isDefault).toBe(true);
+    const before = (await mg.get('/api/evaluations')).body as Ev[];
+    await mg
+      .put(`/api/grade-structures/${standard.id}/bands`)
+      .send([
+        { grade: 1, minPoints: 0, careerLevel: 'Junior', typicalRoles: '' },
+        { grade: 2, minPoints: 500, careerLevel: 'Middle', typicalRoles: '' },
+        { grade: 3, minPoints: 1000, careerLevel: 'Senior', typicalRoles: '' },
+      ])
+      .expect(200);
+    const after = (await mg.get('/api/evaluations')).body as Ev[];
+    expect(find(after, 'FIN-10').result.grade).toBe(3);
+    expect(find(after, 'IT-04').result.grade).toBe(find(before, 'IT-04').result.grade);
+  });
+
+  it('creates, copies, assigns to positions and companies, sets the default and deletes', async () => {
+    const mg = await login('management@demo.com');
     const admin = await login('admin@demo.com');
+    const { structures } = (await mg.get('/api/grade-structures')).body;
+    const standard = structures.find((x: { name: string }) => x.name === 'Standard');
+    const { id } = (await mg.post('/api/grade-structures').send({ name: 'Managers', copyFrom: standard.id }).expect(201)).body;
+    await mg.post('/api/grade-structures').send({ name: 'Managers' }).expect(409);
+
+    const positions = (await admin.get('/api/positions')).body as { id: number; code: string; companyId: number; gradeStructure: { name: string } }[];
+    const fin10 = positions.find((p) => p.code === 'FIN-10')!;
+    await mg.post('/api/grade-structures/assign').send({ positionIds: [fin10.id], structureId: id }).expect(200);
+    let p = (await admin.get('/api/positions')).body.find((x: { code: string }) => x.code === 'FIN-10');
+    expect(p.gradeStructure).toEqual({ id, name: 'Managers', source: 'position' });
+
+    // company default
+    await mg.put(`/api/grade-structures/${id}/companies`).send({ companyIds: [fin10.companyId] }).expect(200);
+    await mg.post('/api/grade-structures/assign').send({ positionIds: [fin10.id], structureId: null }).expect(200);
+    p = (await admin.get('/api/positions')).body.find((x: { code: string }) => x.code === 'FIN-10');
+    expect(p.gradeStructure.source).toBe('company');
+
+    // the default cannot be deleted; deleting another falls back
+    await mg.delete(`/api/grade-structures/${standard.id}`).expect(409);
+    await mg.patch(`/api/grade-structures/${id}`).send({ isDefault: true }).expect(200);
+    await mg.delete(`/api/grade-structures/${standard.id}`).expect(200);
+    const list = (await mg.get('/api/grade-structures')).body.structures;
+    expect(list.find((x: { id: number }) => x.id === id).isDefault).toBe(true);
+    expect(list.some((x: { name: string }) => x.name === 'Standard')).toBe(false);
+  });
+
+  it('rejects non-ascending bands and unknown structures', async () => {
+    const admin = await login('admin@demo.com');
+    const { structures } = (await admin.get('/api/grade-structures')).body;
     await admin
-      .put('/api/grades')
+      .put(`/api/grade-structures/${structures[0].id}/bands`)
       .send([
         { grade: 1, minPoints: 0, careerLevel: '', typicalRoles: '' },
         { grade: 2, minPoints: 0, careerLevel: '', typicalRoles: '' },
       ])
       .expect(400);
+    await admin.post('/api/grade-structures/assign').send({ positionIds: [1], structureId: 99999 }).expect(404);
+    await admin
+      .post('/api/positions/import')
+      .send([{ code: 'Z-1', title: 'Z', company: 'Acme Services', department: 'Sales', gradeStructure: 'Nope' }])
+      .expect(400);
+  });
+
+  it('keeps grade structures separate between organisations', async () => {
+    const other = request.agent(app);
+    await other.post('/api/auth/register').send({ organization: 'Other Co', name: 'Owner', email: 'o2@x.com', password: 'password1' }).expect(201);
+    const theirs = (await other.get('/api/grade-structures')).body.structures;
+    expect(theirs.map((x: { name: string }) => x.name)).toEqual(['Standard']);
+    const mg = await login('management@demo.com');
+    const ours = (await mg.get('/api/grade-structures')).body.structures;
+    await other.put(`/api/grade-structures/${ours[1].id}/bands`).send([{ grade: 1, minPoints: 0, careerLevel: '', typicalRoles: '' }, { grade: 2, minPoints: 5, careerLevel: '', typicalRoles: '' }]).expect(404);
   });
 });
 

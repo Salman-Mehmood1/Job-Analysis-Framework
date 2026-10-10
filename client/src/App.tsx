@@ -25,7 +25,7 @@ const NAV: Record<Role, { to: string; label: string; end?: boolean }[]> = {
     { to: '/admin/positions', label: 'Positions' },
     { to: '/admin/organization', label: 'Companies & departments' },
     { to: '/admin/users', label: 'Users' },
-    { to: '/admin/grades', label: 'Grade structure' },
+    { to: '/admin/grades', label: 'Grade structures' },
     { to: '/admin/jd', label: 'JD analyser' },
   ],
   evaluator: [
@@ -36,7 +36,7 @@ const NAV: Record<Role, { to: string; label: string; end?: boolean }[]> = {
   management: [
     { to: '/management', label: 'Dashboard', end: true },
     { to: '/management/review', label: 'Review & calibration' },
-    { to: '/management/grades', label: 'Grade structure' },
+    { to: '/management/grades', label: 'Grade structures' },
     { to: '/management/jd', label: 'JD analyser' },
   ],
 };
