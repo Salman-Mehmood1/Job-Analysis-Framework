@@ -202,7 +202,9 @@ export function seedDemo(db: DB) {
       logHistory(db, evId, who, 'submitted');
     }
   })();
-  console.log('Seeded demo organisation (admin@demo.com / management@demo.com / evaluator@demo.com, password demo1234)');
+  console.log(
+    'Created the demo organisation. Sign in with admin@demo.com, management@demo.com, evaluator@demo.com, evaluator2@demo.com, kamran@demo.com (line manager) or hina@demo.com (job holder); password demo1234.',
+  );
 }
 
 /**
@@ -249,7 +251,17 @@ export function topUpDemo(db: DB) {
 if (process.argv[1]?.endsWith('seed.ts')) {
   const file = process.env.DB_FILE ?? path.resolve('data/job-evaluation.db');
   if (process.argv.includes('--reset') && file !== ':memory:') {
-    for (const f of [file, `${file}-wal`, `${file}-shm`]) fs.rmSync(f, { force: true });
+    try {
+      for (const f of [file, `${file}-wal`, `${file}-shm`]) fs.rmSync(f, { force: true });
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      console.error(
+        code === 'EBUSY' || code === 'EPERM'
+          ? 'Could not delete the database because it is in use. Stop the app first (Ctrl+C in the window where it runs), then run "npm run reset-demo" again.'
+          : `Could not delete ${file}: ${(err as Error).message}`,
+      );
+      process.exit(1);
+    }
     console.log(`Deleted ${file}`);
   }
   const db = openDb(file);
