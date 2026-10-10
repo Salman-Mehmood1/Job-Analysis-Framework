@@ -8,7 +8,8 @@ import { BASIS_LABEL, rangeFlag, spreadFlag } from '../components/JobBits';
 import { ErrorAlert, Modal, StatusBadge, fmt, fmtDate } from '../components/ui';
 import { useData, useStructures, useUser } from '../hooks';
 
-const show = (v: string | undefined) => (v === undefined ? '' : v === '' ? '–' : v);
+const PS_PERCENT_LABEL: Record<string, string> = { Low: 'Lower', High: 'Higher' };
+const show = (v: string | undefined) => (v === undefined ? '' : v === '' ? '–' : PS_PERCENT_LABEL[v] ?? v);
 
 export default function JobCalibrationPage() {
   const { positionId } = useParams();

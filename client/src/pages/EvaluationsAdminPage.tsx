@@ -12,6 +12,7 @@ function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (n: num
   const [selected, setSelected] = useState<number[]>([]);
   const [evaluatorIds, setEvaluatorIds] = useState<number[]>([]);
   const [dueDate, setDueDate] = useState('');
+  const [method, setMethod] = useState<'direct' | 'questionnaire'>('direct');
   const [instructions, setInstructions] = useState('');
   const [q, setQ] = useState('');
   const [onlyUnassigned, setOnlyUnassigned] = useState(true);
@@ -32,7 +33,7 @@ function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (n: num
     setBusy(true);
     setError(null);
     try {
-      const r = await api.post<{ ids: number[]; skipped: unknown[] }>('/evaluations', { positionIds: selected, evaluatorIds, dueDate: dueDate || null, instructions });
+      const r = await api.post<{ ids: number[]; skipped: unknown[] }>('/evaluations', { positionIds: selected, evaluatorIds, dueDate: dueDate || null, instructions, method });
       onDone(r.ids.length, r.skipped.length);
     } catch (e) {
       setError((e as Error).message);
@@ -61,6 +62,12 @@ function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (n: num
       </p>
       <div className="form-grid" style={{ marginTop: 12 }}>
         <label className="field">Due date<input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></label>
+        <label className="field">Method
+          <select value={method} onChange={(e) => setMethod(e.target.value as typeof method)}>
+            <option value="direct">Enter levels directly</option>
+            <option value="questionnaire">Questionnaire pack (line manager, optional job holder)</option>
+          </select>
+        </label>
       </div>
       <label className="field" style={{ marginTop: 12 }}>Instructions (optional)
         <textarea rows={2} value={instructions} onChange={(e) => setInstructions(e.target.value)} />

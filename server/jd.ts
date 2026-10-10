@@ -122,7 +122,7 @@ ${definitionsText()}
 
 Guidance:
 - Keep the "letter stair" consistent: the Know-How technical letter, Problem Solving environment letter and Accountability freedom letter are usually within one letter of each other. Explain any larger gap.
-- psPick is "High" only when the job sits at the top of its Problem Solving cell; default to "Low".
+- psPick chooses between the two Problem Solving percentages allowed for the chosen thinking environment and challenge: "Low" is the lower percentage (the usual choice), "High" the higher one, only for jobs at the top end of that combination.
 - Magnitude: estimate the annual value (budget, revenue, cost base, assets) the job most directly affects. Use N when no measurable figure applies. If the description uses another currency, convert to USD approximately and say so in the reason.
 - Impact: Prime only if the job is answerable for the end result; Contributory for advisory or support roles.
 - Each reason should cite evidence from the description in one or two sentences.

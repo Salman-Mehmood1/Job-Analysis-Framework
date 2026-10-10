@@ -1,6 +1,7 @@
 import type { EvaluationInputs, EvaluationResult, GradeBand } from '../../shared/engine';
+import type { Answers, EvaluatorQuestionnaire, JobInfo, QuestionnaireResult } from '../../shared/questionnaire';
 
-export type Role = 'admin' | 'evaluator' | 'management';
+export type Role = 'admin' | 'evaluator' | 'management' | 'respondent';
 export type Status = 'assigned' | 'in_progress' | 'submitted' | 'returned' | 'approved';
 
 export interface User {
@@ -30,6 +31,10 @@ export interface Evaluation {
   inputs: EvaluationInputs | null;
   rationale: string;
   source: 'manual' | 'jd_analysis';
+  /** 'questionnaire' when the levels come from the questionnaire pack. */
+  method: 'direct' | 'questionnaire';
+  /** Detail view only. */
+  questionnaire?: QuestionnaireView;
   adjustedInputs: EvaluationInputs | null;
   adjustedBy: string | null;
   adjustedAt: string | null;
@@ -220,3 +225,39 @@ export const api = {
 };
 
 export type { EvaluationInputs, EvaluationResult, GradeBand };
+
+export interface Respondent {
+  id: number;
+  role: 'JH' | 'LM';
+  name: string;
+  status: 'invited' | 'in_progress' | 'submitted';
+  dueDate: string | null;
+  submittedAt: string | null;
+  answers: Answers | null;
+  jobInfo: JobInfo | null;
+  complexProblem: string | null;
+}
+
+export interface QuestionnaireView {
+  ev: EvaluatorQuestionnaire;
+  result: QuestionnaireResult;
+  respondents: Respondent[];
+}
+
+/** A questionnaire as its job holder / line manager sees it. */
+export interface MyQuestionnaire {
+  id: number;
+  role: 'JH' | 'LM';
+  status: 'invited' | 'in_progress' | 'submitted';
+  dueDate: string | null;
+  submittedAt: string | null;
+  updatedAt: string;
+  answers: Answers;
+  jobInfo: JobInfo;
+  complexProblem: string;
+  answered?: number;
+  position: { id: number; code: string; title: string; jobDescription: string; companyName: string; departmentName: string };
+  jobHolderInfo?: { name: string; jobInfo: JobInfo; complexProblem: string }[];
+}
+
+export const RESPONDENT_ROLE_LABEL: Record<'JH' | 'LM', string> = { JH: 'Job holder', LM: 'Line manager' };

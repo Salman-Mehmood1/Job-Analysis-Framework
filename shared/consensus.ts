@@ -47,7 +47,7 @@ export const ELEMENT_LABEL: Record<ElementKey, string> = {
   khShade: 'KH · Shading',
   psEnvironment: 'PS · Thinking environment',
   psChallenge: 'PS · Thinking challenge',
-  psPick: 'PS · % pick',
+  psPick: 'PS · Percentage (lower / higher)',
   acFreedom: 'AC · Freedom to act',
   acMagnitude: 'AC · Magnitude',
   acImpact: 'AC · Impact',

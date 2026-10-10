@@ -1,7 +1,7 @@
 import express, { Router } from 'express';
 import { z } from 'zod';
 import { evaluate } from '../../shared/engine';
-import { requireRole } from '../auth';
+import { STAFF, requireRole } from '../auth';
 import type { DB } from '../db';
 import { HttpError, body, idParam, me } from '../http';
 import { MAX_UPLOAD_BYTES, extractJobDescription } from '../extract';
@@ -11,7 +11,7 @@ import { loadStructures, resolveStructure, structureForPosition } from '../struc
 
 export function jdRoutes(db: DB) {
   const r = Router();
-  const anyone = requireRole();
+  const anyone = requireRole(...STAFF);
 
   r.get('/status', anyone, (_req, res) => {
     res.json({ aiEnabled: aiEnabled(), model: aiEnabled() ? MODEL : null });

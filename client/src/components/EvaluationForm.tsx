@@ -19,7 +19,15 @@ interface ElementSpec {
   label: string;
   options: readonly string[];
   defs?: Record<string, string>;
+  /** Display text for option values, where it differs from the stored value. */
+  optionLabels?: Record<string, string>;
 }
+
+/** Each environment × challenge combination allows two Problem Solving percentages. */
+const PS_PERCENT_DEFS: Record<string, string> = {
+  Low: 'Lower: the lower of the two Problem Solving percentages for this environment and challenge. The usual choice.',
+  High: 'Higher: the higher percentage, for jobs at the top end of this environment and challenge (questionnaire: PS-C shade “+”).',
+};
 
 const FACTORS: { title: string; resultKey: 'khPoints' | 'psPoints' | 'acPoints'; elements: ElementSpec[] }[] = [
   {
@@ -38,7 +46,7 @@ const FACTORS: { title: string; resultKey: 'khPoints' | 'psPoints' | 'acPoints';
     elements: [
       { key: 'psEnvironment', label: 'Thinking environment', options: LETTERS, defs: LEVEL_DEFINITIONS.psEnvironment },
       { key: 'psChallenge', label: 'Thinking challenge', options: CHALLENGES, defs: LEVEL_DEFINITIONS.psChallenge },
-      { key: 'psPick', label: 'Percentage pick within the cell', options: ['Low', 'High'] },
+      { key: 'psPick', label: 'Problem Solving percentage', options: ['Low', 'High'], defs: PS_PERCENT_DEFS, optionLabels: { Low: 'Lower', High: 'Higher' } },
     ],
   },
   {
@@ -103,7 +111,7 @@ export function EvaluationForm({
                 <div className="element-label">
                   <span>{el.label}</span>
                   {compareTo && (compareTo[el.key] as string) !== current && (
-                    <span className="flag">{compareLabel} {optionLabel(compareTo[el.key] as string)}</span>
+                    <span className="flag">{compareLabel} {el.optionLabels?.[compareTo[el.key] as string] ?? optionLabel(compareTo[el.key] as string)}</span>
                   )}
                 </div>
                 <div className="choices" role="radiogroup" aria-label={el.label}>
@@ -123,7 +131,7 @@ export function EvaluationForm({
                         onMouseLeave={() => setHover(null)}
                         title={el.defs?.[o as keyof typeof el.defs]}
                       >
-                        {optionLabel(o)}
+                        {el.optionLabels?.[o] ?? optionLabel(o)}
                       </button>
                     );
                   })}

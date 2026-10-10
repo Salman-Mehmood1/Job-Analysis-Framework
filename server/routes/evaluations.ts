@@ -2,10 +2,12 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { inputsComplete } from '../../shared/engine';
 import { inputsSchema } from '../../shared/schemas';
-import { requireRole } from '../auth';
+import { STAFF, requireRole } from '../auth';
 import type { DB } from '../db';
 import { HttpError, body, idParam, me } from '../http';
 import { approvedCalibration, isMultiRater } from '../jobs';
+import { cleanAnswers, consolidate } from '../../shared/questionnaire';
+import { listResponses, parseEvQuestionnaire, questionnaireView, submittedAnswers } from '../questionnaire';
 import { type EnrichedEvaluation, getEvaluation, getHistory, listEvaluations, logHistory } from '../services';
 
 
@@ -21,6 +23,8 @@ export function evaluationRoutes(db: DB) {
   const r = Router();
   const admin = requireRole('admin');
   const mgmt = requireRole('management');
+  const rawQuestionnaire = (id: number) =>
+    (db.prepare('SELECT questionnaire FROM evaluations WHERE id = ?').get(id) as { questionnaire: string | null }).questionnaire;
 
   /**
    * Evaluators score blind: while a job is being calibrated they never learn about other
@@ -39,18 +43,22 @@ export function evaluationRoutes(db: DB) {
     return e;
   };
 
-  r.get('/', requireRole(), (req, res) => {
+  r.get('/', requireRole(...STAFF), (req, res) => {
     const u = me(req);
     res.json(listEvaluations(db, u.orgId, u.role === 'evaluator' ? u.id : undefined).map((e) => forViewer(u, e)));
   });
 
-  r.get('/:id', requireRole(), (req, res) => {
+  r.get('/:id', requireRole(...STAFF), (req, res) => {
     const u = me(req);
     const e = load(u.orgId, idParam(req));
     if (u.role === 'evaluator' && e.evaluator?.id !== u.id) throw new HttpError(404, 'Evaluation not found');
     const history = getHistory(db, e.id);
     // Event details can name other evaluators or count them; evaluators get the events only.
-    res.json({ ...forViewer(u, e), history: u.role === 'evaluator' ? history.map((h) => ({ ...h, details: {} })) : history });
+    res.json({
+      ...forViewer(u, e),
+      history: u.role === 'evaluator' ? history.map((h) => ({ ...h, details: {} })) : history,
+      questionnaire: questionnaireView(db, u.orgId, e.position.id, rawQuestionnaire(e.id)),
+    });
   });
 
   // Assign one or more positions to one or more evaluators (one evaluation per pair).
@@ -66,6 +74,8 @@ export function evaluationRoutes(db: DB) {
           evaluatorId: z.number().int().optional(),
           dueDate: z.string().max(20).nullable().optional(),
           instructions: z.string().max(5000).default(''),
+          /** 'questionnaire' = levels come from the questionnaire pack (job holder optional). */
+          method: z.enum(['direct', 'questionnaire']).default('direct'),
         })
         .refine((x) => x.evaluatorIds?.length || x.evaluatorId, 'Choose at least one evaluator'),
     );
@@ -89,9 +99,9 @@ export function evaluationRoutes(db: DB) {
           const id = Number(
             db
               .prepare(
-                'INSERT INTO evaluations (org_id, position_id, evaluator_id, assigned_by, due_date, instructions) VALUES (?, ?, ?, ?, ?, ?)',
+                'INSERT INTO evaluations (org_id, position_id, evaluator_id, assigned_by, due_date, instructions, method) VALUES (?, ?, ?, ?, ?, ?, ?)',
               )
-              .run(u.orgId, pid, evaluatorId, u.id, b.dueDate ?? null, b.instructions).lastInsertRowid,
+              .run(u.orgId, pid, evaluatorId, u.id, b.dueDate ?? null, b.instructions, b.method).lastInsertRowid,
           );
           logHistory(db, id, u.id, 'assigned', { evaluatorId });
           ids.push(id);
@@ -156,15 +166,50 @@ export function evaluationRoutes(db: DB) {
       }),
     );
     const status = e.status === 'assigned' ? 'in_progress' : e.status;
+    // Entering levels directly switches the evaluation to direct mode; questionnaire answers are kept.
     db.prepare(
-      "UPDATE evaluations SET inputs = ?, rationale = ?, source = ?, status = ?, updated_at = datetime('now') WHERE id = ?",
+      "UPDATE evaluations SET inputs = ?, rationale = ?, source = ?, status = ?, method = 'direct', updated_at = datetime('now') WHERE id = ?",
     ).run(JSON.stringify(b.inputs), b.rationale, b.source, status, e.id);
     if (e.status === 'assigned') logHistory(db, e.id, u.id, 'started');
     res.json(forViewer(u, load(u.orgId, e.id)));
   });
 
+  const shadeEnum = z.enum(['', '+', '-']);
+  const evQuestionnaireSchema = z.object({
+    answers: z.record(z.string(), z.number()).default({}),
+    magnitude: z.object({
+      figures: z
+        .array(z.object({ measure: z.string().max(120), usd: z.number().nonnegative().nullable(), local: z.string().max(60), influence: z.enum(['direct', 'shared', 'advisory', '']) }))
+        .max(20),
+      primary: z.number().int().nullable(),
+      level: z.enum(['N', '1', '2', '3', '4', '5', '']),
+      source: z.string().max(300),
+    }),
+    overrides: z.record(z.string(), z.object({ level: z.number().int(), shade: shadeEnum, rationale: z.string().max(2000) })).default({}),
+  });
+
+  // Evaluator saves their questionnaire; the levels are derived from it with the JH / LM responses.
+  r.put('/:id/questionnaire', requireRole('evaluator'), (req, res) => {
+    const { u, e } = ownEditable(req);
+    const b = body(req, z.object({ questionnaire: evQuestionnaireSchema, rationale: z.string().max(20_000).default('') }));
+    const q = { ...b.questionnaire, answers: cleanAnswers(b.questionnaire.answers) };
+    const { jh, lm } = submittedAnswers(listResponses(db, u.orgId, e.position.id));
+    const result = consolidate(q as Parameters<typeof consolidate>[0], jh, lm);
+    const status = e.status === 'assigned' ? 'in_progress' : e.status;
+    db.prepare(
+      "UPDATE evaluations SET questionnaire = ?, inputs = ?, rationale = ?, method = 'questionnaire', source = 'manual', status = ?, updated_at = datetime('now') WHERE id = ?",
+    ).run(JSON.stringify(q), JSON.stringify(result.inputs), b.rationale, status, e.id);
+    if (e.status === 'assigned') logHistory(db, e.id, u.id, 'started');
+    res.json({ ...forViewer(u, load(u.orgId, e.id)), questionnaire: questionnaireView(db, u.orgId, e.position.id, rawQuestionnaire(e.id)) });
+  });
+
   r.post('/:id/submit', requireRole('evaluator'), (req, res) => {
     const { u, e } = ownEditable(req);
+    if (e.method === 'questionnaire') {
+      const { jh, lm } = submittedAnswers(listResponses(db, u.orgId, e.position.id));
+      const result = consolidate(parseEvQuestionnaire(rawQuestionnaire(e.id)), jh, lm);
+      if (!result.complete) throw new HttpError(400, 'Answer every questionnaire question, set the magnitude and give a rationale for any override before submitting');
+    }
     if (!e.inputs || !inputsComplete(e.inputs)) throw new HttpError(400, 'Complete every element before submitting');
     db.prepare(
       "UPDATE evaluations SET status = 'submitted', submitted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",

@@ -1,18 +1,18 @@
 import bcrypt from 'bcryptjs';
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireRole } from '../auth';
+import { STAFF, requireRole } from '../auth';
 import type { DB } from '../db';
 import { HttpError, body, idParam, me } from '../http';
 import { loadStructures, resolveStructure } from '../structures';
 
-const roleEnum = z.enum(['admin', 'evaluator', 'management']);
+const roleEnum = z.enum(['admin', 'evaluator', 'management', 'respondent']);
 
 /** Users, companies, departments and positions of the signed-in user's organisation. */
 export function orgRoutes(db: DB) {
   const r = Router();
   const admin = requireRole('admin');
-  const anyone = requireRole();
+  const anyone = requireRole(...STAFF);
 
   const owned = (table: string, id: number, orgId: number) => {
     const row = db.prepare(`SELECT * FROM ${table} WHERE id = ? AND org_id = ?`).get(id, orgId);

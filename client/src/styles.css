@@ -217,3 +217,26 @@ pre.wrap { white-space: pre-wrap; font: inherit; margin: 0; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
 td > input:not([type=checkbox]):not([type=number]) { width: 100%; min-width: 120px; }
 .choice.on:disabled { opacity: 1; }
+
+/* ---------- questionnaire ---------- */
+.q-block { border-top: 1px solid var(--border); padding: 12px 0; }
+.q-block:first-of-type { border-top: 0; }
+.q-head { display: flex; gap: 8px; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+.q-head strong { font-weight: 600; }
+.q-opts { display: grid; gap: 4px; }
+.q-opt { display: grid; grid-template-columns: 40px 1fr auto; gap: 8px; align-items: center; text-align: left; width: 100%; padding: 6px 8px; border-radius: 6px; }
+.q-opt .code { font-weight: 700; color: var(--muted); text-align: center; }
+.q-opt.on { background: var(--accent-soft); border-color: var(--accent); }
+.q-opt.on .code { color: var(--accent); }
+.q-opt.consolidated { box-shadow: inset 3px 0 0 var(--ok); }
+.q-opt:disabled { opacity: 1; cursor: default; }
+.marker { font-size: 11px; font-weight: 700; border-radius: 4px; padding: 0 5px; margin-left: 4px; }
+.m-JH { background: var(--info-soft); color: var(--info); }
+.m-LM { background: var(--warn-soft); color: var(--warn); }
+.m-EV { background: var(--accent); color: var(--accent-text); }
+.m-OK { background: var(--ok-soft); color: var(--ok); }
+.score-box { background: var(--surface-2); border-radius: 6px; padding: 10px 12px; margin-top: 8px; }
+.score-box table td, .score-box table th { padding: 4px 8px; background: transparent; }
+.progress { height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.progress > div { height: 100%; background: var(--accent); }
+.section-nav { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }

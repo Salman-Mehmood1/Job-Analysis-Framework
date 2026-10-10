@@ -10,6 +10,8 @@ const DEMO = [
   ['Administrator', 'admin@demo.com'],
   ['Management', 'management@demo.com'],
   ['Evaluator', 'evaluator@demo.com'],
+  ['Line manager', 'kamran@demo.com'],
+  ['Job holder', 'hina@demo.com'],
 ] as const;
 
 export function LoginPage() {

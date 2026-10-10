@@ -4,6 +4,8 @@ import { EMPTY_INPUTS, evaluate, inputsComplete } from '../../../shared/engine';
 import { api, type Evaluation, type EvaluationInputs, type JdAnalysis } from '../api';
 import { EvaluationForm, ResultStrip } from '../components/EvaluationForm';
 import { ErrorAlert, StatusBadge, fmt, fmtDate } from '../components/ui';
+import { EvaluatorQuestionnaire, RespondentsCard, useConsolidated } from '../components/EvaluatorQuestionnaire';
+import { EMPTY_EV_QUESTIONNAIRE, type EvaluatorQuestionnaire as EvQ } from '../../../shared/questionnaire';
 import { useData, useStructures } from '../hooks';
 
 export default function EvaluatePage() {
@@ -17,6 +19,9 @@ export default function EvaluatePage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // null = follow the saved evaluation, so the page never flashes the wrong mode while loading.
+  const [methodChoice, setMethod] = useState<'direct' | 'questionnaire' | null>(null);
+  const [qEdit, setQDraft] = useState<EvQ | null>(null);
 
   const e = ev.data;
   useEffect(() => {
@@ -24,13 +29,27 @@ export default function EvaluatePage() {
       setInputs(e.inputs ?? { ...EMPTY_INPUTS });
       setRationale(e.rationale);
       setSource(e.source);
+      setMethod(null);
+      setQDraft(null);
     }
   }, [e]);
 
+  const method = methodChoice ?? e?.method ?? 'direct';
+  const qDraft = qEdit ?? e?.questionnaire?.ev ?? EMPTY_EV_QUESTIONNAIRE;
+  const respondents = e?.questionnaire?.respondents ?? [];
+  const qResult = useConsolidated(qDraft, respondents);
+  const isQ = method === 'questionnaire';
+  // In questionnaire mode the levels come from the consolidated questionnaire.
+  const shownInputs = isQ ? qResult.inputs : inputs;
   const bands = structures.bandsFor(ev.data?.gradeStructure.id);
-  const result = useMemo(() => (bands ? evaluate(inputs, bands) : null), [inputs, bands]);
+  const result = useMemo(() => (bands ? evaluate(shownInputs, bands) : null), [shownInputs, bands]);
   const editable = e && ['assigned', 'in_progress', 'returned'].includes(e.status);
-  const dirty = e && (JSON.stringify(inputs) !== JSON.stringify(e.inputs ?? EMPTY_INPUTS) || rationale !== e.rationale);
+  const dirty =
+    !!e &&
+    (method !== e.method ||
+      rationale !== e.rationale ||
+      (isQ ? JSON.stringify(qDraft) !== JSON.stringify(e.questionnaire?.ev ?? EMPTY_EV_QUESTIONNAIRE) : JSON.stringify(inputs) !== JSON.stringify(e.inputs ?? EMPTY_INPUTS)));
+  const canSubmit = isQ ? qResult.complete : inputsComplete(inputs);
 
   const save = async (submit: boolean) => {
     if (!e) return;
@@ -38,7 +57,10 @@ export default function EvaluatePage() {
     setError(null);
     setNotice(null);
     try {
-      if (dirty || !e.inputs) await api.put(`/evaluations/${e.id}/inputs`, { inputs, rationale, source });
+      if (dirty || !e.inputs) {
+        if (isQ) await api.put(`/evaluations/${e.id}/questionnaire`, { questionnaire: qDraft, rationale });
+        else await api.put(`/evaluations/${e.id}/inputs`, { inputs, rationale, source });
+      }
       if (submit) {
         await api.post(`/evaluations/${e.id}/submit`);
         setNotice('Submitted for management review.');
@@ -98,7 +120,10 @@ export default function EvaluatePage() {
         {editable && (
           <div className="row">
             <button disabled={busy || !dirty} onClick={() => save(false)}>Save draft</button>
-            <button className="primary" disabled={busy || !inputsComplete(inputs)} onClick={() => save(true)}>Submit for review</button>
+            <button className="primary" disabled={busy || !canSubmit} onClick={() => save(true)}
+              title={canSubmit ? '' : isQ ? 'Rate every question, set the magnitude and justify any override' : 'Set every element'}>
+              Submit for review
+            </button>
           </div>
         )}
       </div>
@@ -141,10 +166,47 @@ export default function EvaluatePage() {
         </div>
       )}
 
-      <div className="card">
-        {e.calibrated && <h2>Your evaluation</h2>}
-        <EvaluationForm inputs={inputs} onChange={setInputs} readOnly={!editable} result={result} />
-      </div>
+      {(editable || e.method === 'questionnaire') && (
+        <div className="card">
+          <div className="row spread">
+            <div>
+              <h2 style={{ marginBottom: 2 }}>{e.calibrated ? 'Your evaluation' : 'How to rate this job'}</h2>
+              <p className="small muted" style={{ margin: 0 }}>
+                {isQ
+                  ? 'Questionnaire pack: rate each of the 35 weighted questions; the job holder and line manager answers are consolidated with yours into the eight levels.'
+                  : 'Enter the eight levels directly.'}
+              </p>
+            </div>
+            {editable && (
+              <div className="row" role="radiogroup" aria-label="Evaluation method">
+                <button role="radio" aria-checked={isQ} className={`choice${isQ ? ' on' : ''}`} onClick={() => setMethod('questionnaire')}>Questionnaire pack</button>
+                <button role="radio" aria-checked={!isQ} className={`choice${!isQ ? ' on' : ''}`}
+                  onClick={() => { if (isQ && qResult.complete) setInputs(qResult.inputs); setMethod('direct'); }}>
+                  Enter levels directly
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {isQ ? (
+        <>
+          <RespondentsCard respondents={respondents} />
+          <div className="card">
+            <EvaluatorQuestionnaire value={qDraft} onChange={setQDraft} respondents={respondents} readOnly={!editable} />
+          </div>
+          <details className="card">
+            <summary><strong>Resulting levels</strong> <span className="small muted">(carried to the scoring calculator)</span></summary>
+            <div style={{ marginTop: 12 }}><EvaluationForm inputs={qResult.inputs} readOnly result={result} /></div>
+          </details>
+        </>
+      ) : (
+        <div className="card">
+          {e.calibrated && !editable && <h2>Your evaluation</h2>}
+          <EvaluationForm inputs={inputs} onChange={setInputs} readOnly={!editable} result={result} />
+        </div>
+      )}
 
       <div className="grid grid-2" style={{ marginTop: 16 }}>
         <div className="card">
@@ -155,7 +217,7 @@ export default function EvaluatePage() {
         <div className="card">
           <div className="row spread">
             <h2>Job description</h2>
-            {editable && e.position.jobDescription.trim().length >= 20 && (
+            {editable && !isQ && e.position.jobDescription.trim().length >= 20 && (
               <button disabled={busy} onClick={analyse}>{busy ? 'Analysing…' : 'Suggest levels from JD'}</button>
             )}
           </div>

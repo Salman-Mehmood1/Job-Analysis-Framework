@@ -2,7 +2,10 @@ import crypto from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 
-export type Role = 'admin' | 'evaluator' | 'management';
+export type Role = 'admin' | 'evaluator' | 'management' | 'respondent';
+
+/** Roles that work on evaluations. Respondents (job holders / line managers) only see their own questionnaires. */
+export const STAFF: Role[] = ['admin', 'evaluator', 'management'];
 
 export interface AuthUser {
   id: number;

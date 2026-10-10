@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { DEFAULT_GRADES } from '../../shared/engine';
 import { gradeStructureSchema } from '../../shared/schemas';
-import { requireRole } from '../auth';
+import { STAFF, requireRole } from '../auth';
 import { type DB, createStructure, replaceBands } from '../db';
 import { HttpError, body, idParam, me } from '../http';
 import { loadStructures, resolveStructure } from '../structures';
@@ -41,7 +41,7 @@ export function gradeRoutes(db: DB) {
     return { ctx, counts };
   };
 
-  r.get('/', requireRole(), (req, res) => {
+  r.get('/', requireRole(...STAFF), (req, res) => {
     const orgId = me(req).orgId;
     const { ctx, counts } = usage(orgId);
     res.json({

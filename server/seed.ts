@@ -9,6 +9,7 @@ import bcrypt from 'bcryptjs';
 import { EMPTY_INPUTS, type EvaluationInputs } from '../shared/engine';
 import { type DB, createStructure, openDb, seedDefaultGrades } from './db';
 import { logHistory } from './services';
+import { QUESTIONNAIRE, RESPONDENT_QUESTIONS } from '../shared/questionnaire';
 
 type Lv = [string, string, string, string, string, string, string, string, string?, string?];
 
@@ -73,6 +74,8 @@ export function seedDemo(db: DB) {
     const mgmt = addUser('Omar Siddiqui (Management)', 'management@demo.com', 'management');
     const ev1 = addUser('Sara Ahmed', 'evaluator@demo.com', 'evaluator');
     const ev2 = addUser('Bilal Raza', 'evaluator2@demo.com', 'evaluator');
+    const jobHolder = addUser('Hina Malik', 'hina@demo.com', 'respondent');
+    const lineManager = addUser('Kamran Ali', 'kamran@demo.com', 'respondent');
 
     const companies = new Map<string, number>();
     const depts = new Map<string, number>();
@@ -140,6 +143,36 @@ export function seedDemo(db: DB) {
       { grade: 8, minPoints: 2700, careerLevel: 'Executive', typicalRoles: 'Managing director' },
     ]);
     db.prepare('UPDATE companies SET default_structure_id = ? WHERE id = ?').run(services, companies.get('Acme Services')!);
+
+    // Questionnaire pack demo: Head of IT is evaluated by Bilal with the questionnaire. The line
+    // manager has submitted; the job holder has been asked but not answered (job holders are optional).
+    const headOfIt = db.prepare("SELECT id FROM positions WHERE org_id = ? AND code = 'IT-12'").get(orgId) as { id: number };
+    db.prepare("UPDATE evaluations SET method = 'questionnaire' WHERE position_id = ?").run(headOfIt.id);
+    const lmLevels: Record<string, number[]> = {
+      KH_T: [6, 6, 6, 5, 6], KH_B: [3, 3, 4, 3, 4], KH_H: [3, 2, 2, 3, 3], PS_E: [6, 5, 6, 6, 5],
+      PS_C: [4, 4, 4, 0, 3], AC_F: [6, 5, 6, 6, 6], AC_I: [4, 4, 4, 3, 4],
+    };
+    const lmAnswers = Object.fromEntries(
+      QUESTIONNAIRE.flatMap((el) => el.questions.map((q, i) => [q.id, lmLevels[el.id][i]] as const)).filter(([id]) => RESPONDENT_QUESTIONS.some((q) => q.id === id)),
+    );
+    db.prepare(
+      `INSERT INTO questionnaire_responses (org_id, position_id, user_id, role, status, answers, job_info, complex_problem, due_date, invited_by, submitted_at)
+       VALUES (?, ?, ?, 'LM', 'submitted', ?, ?, ?, date('now', '+7 days'), ?, datetime('now'))`,
+    ).run(
+      orgId, headOfIt.id, lineManager,
+      JSON.stringify(lmAnswers),
+      JSON.stringify({
+        purpose: 'Provide reliable, secure technology that lets Acme Services run and grow.',
+        accountabilities: 'Set the IT strategy and roadmap\nRun infrastructure, applications and service desk to agreed service levels\nDeliver the $8M IT budget\nProtect systems and data from security threats',
+        directReports: '3 managers: infrastructure, applications, service desk',
+        totalStaff: '30',
+      }),
+      'Replaced the ageing ERP within the year without disrupting billing: weighed three vendors, negotiated the contract and phased the cut-over around month-end close.',
+      admin,
+    );
+    db.prepare(
+      "INSERT INTO questionnaire_responses (org_id, position_id, user_id, role, due_date, invited_by) VALUES (?, ?, ?, 'JH', date('now', '+7 days'), ?)",
+    ).run(orgId, headOfIt.id, jobHolder, admin);
 
     // A job rated independently by both evaluators, ready for calibration.
     const procDept = depts.get('Acme Manufacturing/Finance')!;

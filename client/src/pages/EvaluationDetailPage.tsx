@@ -3,6 +3,8 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { EMPTY_INPUTS, evaluate, inputsComplete } from '../../../shared/engine';
 import { api, type Evaluation, type EvaluationInputs, type OrgUser } from '../api';
 import { EvaluationForm, ResultStrip } from '../components/EvaluationForm';
+import { EvaluatorQuestionnaire, RespondentsCard } from '../components/EvaluatorQuestionnaire';
+import { RESPONDENT_ROLE_LABEL } from '../api';
 import { ErrorAlert, StatusBadge, fmt, fmtDate } from '../components/ui';
 import { useData, useStructures, useUser } from '../hooks';
 
@@ -164,6 +166,15 @@ export default function EvaluationDetailPage() {
             </div>
           )}
 
+          {e.questionnaire && (e.method === 'questionnaire' || e.questionnaire.respondents.length > 0) && (
+            <div className="card">
+              <div className="row spread">
+                <h2>Questionnaire pack</h2>
+                {e.method !== 'questionnaire' && <span className="badge b-neutral">Not used: levels entered directly</span>}
+              </div>
+              <EvaluatorQuestionnaire value={e.questionnaire.ev} respondents={e.questionnaire.respondents} readOnly />
+            </div>
+          )}
           {e.rationale && (
             <div className="card"><h2>Evaluator’s rationale</h2><pre className="wrap">{e.rationale}</pre></div>
           )}
@@ -195,6 +206,11 @@ export default function EvaluationDetailPage() {
                 nav('/admin/evaluations');
               }} />}
           </div>
+          {user.role === 'admin' ? (
+            <RespondentsAdmin positionId={e.position.id} users={users.data ?? []} onChange={() => ev.reload()} />
+          ) : e.questionnaire && e.questionnaire.respondents.length > 0 ? (
+            <RespondentsCard respondents={e.questionnaire.respondents} />
+          ) : null}
           <div className="card">
             <h2>History</h2>
             <ul className="timeline">
@@ -245,6 +261,72 @@ function AdminAssignment({
         <button disabled={busy || due === (e.dueDate ?? '')} onClick={() => onChange({ dueDate: due || null }, 'Due date updated.')}>Set due date</button>
       </div>
       <button className="danger" onClick={onDelete}>Delete evaluation</button>
+    </div>
+  );
+}
+
+/** Admin: ask a job holder (optional) and line manager to answer the questionnaire for this job. */
+function RespondentsAdmin({ positionId, users, onChange }: { positionId: number; users: OrgUser[]; onChange: () => void }) {
+  const list = useData<{ id: number; role: 'JH' | 'LM'; status: string; userName: string; dueDate: string | null }[]>(`/questionnaire-responses?positionId=${positionId}`);
+  const [userId, setUserId] = useState(0);
+  const [role, setRole] = useState<'JH' | 'LM'>('LM');
+  const [due, setDue] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const respondents = users.filter((u) => u.role === 'respondent' && u.active);
+  const act = async (fn: () => Promise<unknown>) => {
+    setError(null);
+    try {
+      await fn();
+      list.reload();
+      onChange();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  return (
+    <div className="card">
+      <h2>Questionnaire respondents</h2>
+      <p className="small muted">The line manager and, optionally, the job holder answer the questionnaire pack for this job. Shared by every evaluation of the job.</p>
+      <ErrorAlert error={error ?? list.error} />
+      <table>
+        <tbody>
+          {(list.data ?? []).map((r) => (
+            <tr key={r.id}>
+              <td>{RESPONDENT_ROLE_LABEL[r.role]}</td>
+              <td>{r.userName}</td>
+              <td><span className={`badge ${r.status === 'submitted' ? 'b-approved' : 'b-assigned'}`}>{r.status === 'invited' ? 'Not started' : r.status === 'in_progress' ? 'In progress' : 'Submitted'}</span></td>
+              <td style={{ whiteSpace: 'nowrap' }}>
+                {r.status === 'submitted' && <button className="ghost" onClick={() => act(() => api.post(`/questionnaire-responses/${r.id}/reopen`))}>Reopen</button>}
+                <button className="ghost danger" onClick={() => confirm(`Remove ${r.userName}? Their answers are deleted.`) && act(() => api.del(`/questionnaire-responses/${r.id}`))}>Remove</button>
+              </td>
+            </tr>
+          ))}
+          {!list.data?.length && <tr><td className="muted small">Nobody asked yet.</td></tr>}
+        </tbody>
+      </table>
+      {respondents.length ? (
+        <div className="stack" style={{ marginTop: 8 }}>
+          <div className="row">
+            <select value={role} onChange={(e) => setRole(e.target.value as 'JH' | 'LM')}>
+              <option value="LM">Line manager</option>
+              <option value="JH">Job holder (optional)</option>
+            </select>
+            <select value={userId} onChange={(e) => setUserId(Number(e.target.value))} style={{ flex: 1 }}>
+              <option value={0}>Choose person…</option>
+              {respondents.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          </div>
+          <div className="row">
+            <input type="date" value={due} onChange={(e) => setDue(e.target.value)} aria-label="Due date" style={{ flex: 1 }} />
+            <button className="primary" disabled={!userId}
+              onClick={() => act(async () => { await api.post('/questionnaire-responses', { positionId, userId, role, dueDate: due || null }); setUserId(0); })}>
+              Ask to complete
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="small muted" style={{ marginTop: 8 }}>Add users with the “Job holder / line manager” role on the Users page first.</p>
+      )}
     </div>
   );
 }

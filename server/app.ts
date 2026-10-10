@@ -11,6 +11,7 @@ import { gradeRoutes } from './routes/grades';
 import { jdRoutes } from './routes/jd';
 import { jobRoutes } from './routes/jobs';
 import { orgRoutes } from './routes/org';
+import { responseRoutes } from './routes/responses';
 
 export function createApp(db: DB, opts: { staticDir?: string } = {}) {
   const app = express();
@@ -37,6 +38,7 @@ export function createApp(db: DB, opts: { staticDir?: string } = {}) {
   app.use('/api/grade-structures', gradeRoutes(db));
   app.use('/api/jd', jdRoutes(db));
   app.use('/api/jobs', jobRoutes(db));
+  app.use('/api/questionnaire-responses', responseRoutes(db));
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
 
   if (opts.staticDir && fs.existsSync(opts.staticDir)) {

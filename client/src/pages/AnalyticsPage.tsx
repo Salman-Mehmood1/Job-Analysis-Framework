@@ -109,7 +109,7 @@ export default function AnalyticsPage() {
 
   const exportCsv = () =>
     downloadCsv('job-evaluations.csv', [
-      ['Code', 'Role', 'Job family', 'Company', 'Department', 'Evaluators', 'Result basis', 'Status', 'KH tech', 'KH breadth', 'KH HR', 'KH shade', 'PS env', 'PS challenge', 'PS pick', 'AC freedom', 'AC magnitude', 'AC impact', 'AC shade', 'KH pts', 'PS %', 'PS pts', 'AC pts', 'Total', 'Profile', 'Grade structure', 'Grade', 'Career level', 'Checks', 'Adjusted by management', 'Lowest evaluator total', 'Highest evaluator total'],
+      ['Code', 'Role', 'Job family', 'Company', 'Department', 'Evaluators', 'Result basis', 'Status', 'KH tech', 'KH breadth', 'KH HR', 'KH shade', 'PS env', 'PS challenge', 'PS percentage (lower/higher)', 'AC freedom', 'AC magnitude', 'AC impact', 'AC shade', 'KH pts', 'PS %', 'PS pts', 'AC pts', 'Total', 'Profile', 'Grade structure', 'Grade', 'Career level', 'Checks', 'Adjusted by management', 'Lowest evaluator total', 'Highest evaluator total'],
       ...tableRows.map((r) => {
         const i = r.effectiveInputs;
         const x = r.result;

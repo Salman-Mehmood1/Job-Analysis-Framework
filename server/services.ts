@@ -41,6 +41,8 @@ interface EvalRow {
   updated_at: string;
   rater_count: number;
   position_structure_id: number | null;
+  method: 'direct' | 'questionnaire';
+  questionnaire: string | null;
 }
 
 const BASE_SELECT = `
@@ -50,7 +52,7 @@ SELECT e.id, e.position_id, p.code AS position_code, p.title AS position_title, 
        e.status, e.due_date, e.instructions, e.inputs, e.rationale, e.source, e.adjusted_inputs,
        e.adjusted_at, e.review_comment, e.submitted_at, e.approved_at, e.created_at, e.updated_at,
        (SELECT COUNT(*) FROM evaluations x WHERE x.position_id = e.position_id) AS rater_count,
-       p.grade_structure_id AS position_structure_id
+       p.grade_structure_id AS position_structure_id, e.method, e.questionnaire
 FROM evaluations e
 JOIN positions p ON p.id = e.position_id
 JOIN companies c ON c.id = p.company_id
@@ -87,6 +89,8 @@ function enrich(row: EvalRow, ctx: StructureContext) {
     inputs,
     rationale: row.rationale,
     source: row.source,
+    /** 'questionnaire' when the levels come from the questionnaire pack. */
+    method: row.method,
     adjustedInputs: adjusted,
     adjustedBy: row.adjusted_by_name,
     adjustedAt: row.adjusted_at,

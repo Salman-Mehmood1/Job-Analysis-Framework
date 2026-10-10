@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE COLLATE NOCASE,
   password_hash TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('admin','evaluator','management')),
+  role TEXT NOT NULL CHECK (role IN ('admin','evaluator','management','respondent')),
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -148,6 +148,26 @@ CREATE TABLE IF NOT EXISTS grade_bands (
   UNIQUE (structure_id, grade)
 );
 
+-- Questionnaire pack: a job holder (JH) or line manager (LM) asked to answer the
+-- questionnaire for a job. Job holders are optional.
+CREATE TABLE IF NOT EXISTS questionnaire_responses (
+  id INTEGER PRIMARY KEY,
+  org_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  position_id INTEGER NOT NULL REFERENCES positions(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  role TEXT NOT NULL CHECK (role IN ('JH','LM')),
+  status TEXT NOT NULL DEFAULT 'invited' CHECK (status IN ('invited','in_progress','submitted')),
+  answers TEXT NOT NULL DEFAULT '{}',
+  job_info TEXT NOT NULL DEFAULT '{}',
+  complex_problem TEXT NOT NULL DEFAULT '',
+  due_date TEXT,
+  invited_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  submitted_at TEXT,
+  UNIQUE (position_id, user_id, role)
+);
+
 CREATE INDEX IF NOT EXISTS idx_eval_org ON evaluations(org_id);
 CREATE INDEX IF NOT EXISTS idx_eval_evaluator ON evaluations(evaluator_id);
 CREATE INDEX IF NOT EXISTS idx_pos_org ON positions(org_id);
@@ -170,6 +190,32 @@ function addColumn(db: DB, table: string, column: string, ddl: string) {
 
 /** Upgrades databases created before grade structures existed. Safe to run on every start. */
 function migrate(db: DB) {
+  // Older databases only allowed admin/evaluator/management; rebuild users to allow respondents.
+  const usersSql = (db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'").get() as { sql: string }).sql;
+  if (!usersSql.includes("'respondent'")) {
+    db.pragma('foreign_keys = OFF');
+    db.transaction(() => {
+      db.exec(`CREATE TABLE users_new (
+        id INTEGER PRIMARY KEY,
+        org_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL CHECK (role IN ('admin','evaluator','management','respondent')),
+        active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO users_new (id, org_id, name, email, password_hash, role, active, created_at)
+        SELECT id, org_id, name, email, password_hash, role, active, created_at FROM users;
+      DROP TABLE users;
+      ALTER TABLE users_new RENAME TO users;`);
+      const bad = db.pragma('foreign_key_check') as unknown[];
+      if (bad.length) throw new Error('Foreign key check failed while upgrading users');
+    })();
+    db.pragma('foreign_keys = ON');
+  }
+  addColumn(db, 'evaluations', 'method', "TEXT NOT NULL DEFAULT 'direct'");
+  addColumn(db, 'evaluations', 'questionnaire', 'TEXT');
   addColumn(db, 'positions', 'grade_structure_id', 'INTEGER REFERENCES grade_structures(id) ON DELETE SET NULL');
   addColumn(db, 'companies', 'default_structure_id', 'INTEGER REFERENCES grade_structures(id) ON DELETE SET NULL');
   addColumn(db, 'jd_analyses', 'structure_id', 'INTEGER REFERENCES grade_structures(id) ON DELETE SET NULL');

@@ -3,7 +3,7 @@ import { api, type OrgUser, type Role } from '../api';
 import { ErrorAlert } from '../components/ui';
 import { useData, useUser } from '../hooks';
 
-const ROLE_LABEL: Record<Role, string> = { admin: 'Administrator', evaluator: 'Evaluator', management: 'Management' };
+const ROLE_LABEL: Record<Role, string> = { admin: 'Administrator', evaluator: 'Evaluator', management: 'Management', respondent: 'Job holder / line manager' };
 
 export default function UsersPage() {
   const me = useUser();

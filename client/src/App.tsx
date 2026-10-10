@@ -14,9 +14,10 @@ import { MyEvaluationsPage, MyResultsPage } from './pages/EvaluatorPages';
 import OrganizationPage from './pages/OrganizationPage';
 import PositionsPage from './pages/PositionsPage';
 import ReviewQueuePage from './pages/ReviewQueuePage';
+import { MyQuestionnairesPage, RespondQuestionnairePage } from './pages/RespondentPages';
 import UsersPage from './pages/UsersPage';
 
-export const HOME: Record<Role, string> = { admin: '/admin', evaluator: '/evaluator', management: '/management' };
+export const HOME: Record<Role, string> = { admin: '/admin', evaluator: '/evaluator', management: '/management', respondent: '/respondent' };
 
 const NAV: Record<Role, { to: string; label: string; end?: boolean }[]> = {
   admin: [
@@ -33,6 +34,7 @@ const NAV: Record<Role, { to: string; label: string; end?: boolean }[]> = {
     { to: '/evaluator/results', label: 'My results' },
     { to: '/evaluator/jd', label: 'JD analyser' },
   ],
+  respondent: [{ to: '/respondent', label: 'My questionnaires', end: true }],
   management: [
     { to: '/management', label: 'Dashboard', end: true },
     { to: '/management/review', label: 'Review & calibration' },
@@ -45,6 +47,7 @@ const PANEL_NAME: Record<Role, string> = {
   admin: 'Administrator panel',
   evaluator: 'Evaluator panel',
   management: 'Management panel',
+  respondent: 'Job holder & line manager panel',
 };
 
 function Panel({ role }: { role: Role }) {
@@ -106,6 +109,11 @@ export default function App() {
         <Route path="evaluations/:id" element={<EvaluatePage />} />
         <Route path="results" element={<MyResultsPage />} />
         <Route path="jd" element={<JdAnalyzerPage />} />
+      </Route>
+
+      <Route path="/respondent" element={<Panel role="respondent" />}>
+        <Route index element={<MyQuestionnairesPage />} />
+        <Route path="questionnaires/:id" element={<RespondQuestionnairePage />} />
       </Route>
 
       <Route path="/management" element={<Panel role="management" />}>

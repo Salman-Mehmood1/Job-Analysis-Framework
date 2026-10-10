@@ -4,6 +4,7 @@ import { createApp } from '../server/app';
 import { openDb } from '../server/db';
 import { analyseWithRules } from '../server/jd';
 import { seedDemo } from '../server/seed';
+import { QUESTIONNAIRE } from '../shared/questionnaire';
 
 process.env.JD_ANALYZER = 'rules';
 
@@ -320,5 +321,102 @@ describe('multi-evaluator calibration', () => {
     expect((await ev2.get(`/api/evaluations/${id2}`)).body.calibrated).toBeNull();
     expect(job.basis).toBe('adjusted_consensus');
     await mg.post(`/api/evaluations/${id2}/return`).send({ comment: 'Recheck impact' }).expect(200);
+  });
+});
+
+describe('questionnaire pack: job holder & line manager panel', () => {
+  const answerAll = (level: (el: string, i: number) => number, opts: { evaluator?: boolean } = {}) =>
+    Object.fromEntries(
+      QUESTIONNAIRE.flatMap((el) =>
+        el.questions.filter((q) => opts.evaluator || !q.evaluatorOnly).map((q, i) => [q.id, Math.min(level(el.id, i), el.codes.length)] as const),
+      ),
+    );
+  const evQuestionnaire = (answers: Record<string, number>, level: 'N' | '1' | '2' | '3' | '4' | '5' = '2') => ({
+    answers,
+    magnitude: { figures: [{ measure: 'Operating budget or cost base', usd: 8_000_000, local: '', influence: 'direct' }], primary: 0, level, source: 'FY budget' },
+    overrides: {},
+  });
+
+  it('respondents only reach their own questionnaires', async () => {
+    const lm = await login('kamran@demo.com');
+    await lm.get('/api/evaluations').expect(403);
+    await lm.get('/api/jobs').expect(403);
+    await lm.get('/api/companies').expect(403);
+    await lm.get('/api/grade-structures').expect(403);
+    await lm.post('/api/jd/analyze').send({ text: 'x'.repeat(40) }).expect(403);
+    const mine = (await lm.get('/api/questionnaire-responses/mine').expect(200)).body;
+    expect(mine).toHaveLength(1);
+    expect(mine[0]).toMatchObject({ role: 'LM', status: 'submitted' });
+    const jh = await login('hina@demo.com');
+    await jh.get(`/api/questionnaire-responses/mine/${mine[0].id}`).expect(404);
+  });
+
+  it('the line manager never sees the job holder’s ratings, only their job information', async () => {
+    const jh = await login('hina@demo.com');
+    const [req] = (await jh.get('/api/questionnaire-responses/mine')).body;
+    await jh
+      .put(`/api/questionnaire-responses/mine/${req.id}`)
+      .send({ answers: { ...answerAll(() => 7), 'PS_C.4': 5 }, jobInfo: { purpose: 'Run IT' }, complexProblem: 'ERP' })
+      .expect(200);
+    const saved = (await jh.get(`/api/questionnaire-responses/mine/${req.id}`)).body;
+    expect(saved.answers['PS_C.4']).toBeUndefined(); // evaluator-only question dropped
+    await jh.post(`/api/questionnaire-responses/mine/${req.id}/submit`).expect(200);
+    await jh.put(`/api/questionnaire-responses/mine/${req.id}`).send({ answers: {} }).expect(409);
+
+    const lm = await login('kamran@demo.com');
+    const [lmReq] = (await lm.get('/api/questionnaire-responses/mine')).body;
+    const view = (await lm.get(`/api/questionnaire-responses/mine/${lmReq.id}`)).body;
+    expect(view.jobHolderInfo).toEqual([{ name: 'Hina Malik', jobInfo: { purpose: 'Run IT' }, complexProblem: 'ERP' }]);
+    expect(JSON.stringify(view.jobHolderInfo)).not.toContain('KH_T');
+  });
+
+  it('evaluator questionnaire becomes the evaluation’s levels; the job holder is optional', async () => {
+    const bilal = await login('evaluator2@demo.com');
+    const e = (await bilal.get('/api/evaluations')).body.find((x: { position: { code: string } }) => x.position.code === 'IT-12');
+    expect(e.method).toBe('questionnaire');
+    let detail = (await bilal.get(`/api/evaluations/${e.id}`)).body;
+    expect(detail.questionnaire.respondents.map((r: { role: string; status: string }) => `${r.role}:${r.status}`)).toEqual(['LM:submitted', 'JH:invited']);
+    expect(detail.questionnaire.respondents.find((r: { role: string }) => r.role === 'JH').answers).toBeNull();
+
+    // incomplete questionnaire cannot be submitted
+    await bilal.put(`/api/evaluations/${e.id}/questionnaire`).send({ questionnaire: evQuestionnaire({ 'KH_T.1': 6 }) }).expect(200);
+    await bilal.post(`/api/evaluations/${e.id}/submit`).expect(400);
+
+    // EV answers everything one level below the LM on KH-T; with no JH, each question takes the EV value
+    const ev = answerAll((el) => ({ KH_T: 5, KH_B: 3, KH_H: 2, PS_E: 6, PS_C: 4, AC_F: 6, AC_I: 4 })[el]!, { evaluator: true });
+    detail = (await bilal.put(`/api/evaluations/${e.id}/questionnaire`).send({ questionnaire: evQuestionnaire(ev) }).expect(200)).body;
+    expect(detail.questionnaire.result.complete).toBe(true);
+    expect(detail.inputs).toMatchObject({ khTechnical: 'E', khBreadth: 'II', khHumanRelations: '2', psEnvironment: 'F', psChallenge: '4', acFreedom: 'F', acMagnitude: '2', acImpact: 'P' });
+    expect(detail.result.complete).toBe(true);
+
+    // the job holder submits later: KH-T becomes the median of JH 7, LM 6/5…, EV 5
+    const jh = await login('hina@demo.com');
+    const [req] = (await jh.get('/api/questionnaire-responses/mine')).body;
+    await jh.put(`/api/questionnaire-responses/mine/${req.id}`).send({ answers: answerAll(() => 8) }).expect(200);
+    await jh.post(`/api/questionnaire-responses/mine/${req.id}/submit`).expect(200);
+    detail = (await bilal.get(`/api/evaluations/${e.id}`)).body;
+    expect(detail.inputs.khTechnical).toBe('F'); // LM's 6s now break the JH 8 / EV 5 tie
+    expect(detail.questionnaire.result.elements.KH_T.divergentQuestions.length).toBeGreaterThan(0); // JH 8 vs LM 6/5
+
+    await bilal.post(`/api/evaluations/${e.id}/submit`).expect(200);
+    // switching to direct entry is no longer possible once submitted
+    await bilal.put(`/api/evaluations/${e.id}/questionnaire`).send({ questionnaire: evQuestionnaire(ev) }).expect(409);
+  });
+
+  it('admin invites respondents; only respondent users can be invited', async () => {
+    const admin = await login('admin@demo.com');
+    const positions = (await admin.get('/api/positions')).body as { id: number; code: string }[];
+    const pos = positions.find((p) => p.code === 'FIN-05')!;
+    const users = (await admin.get('/api/users')).body as { id: number; email: string }[];
+    const hina = users.find((u) => u.email === 'hina@demo.com')!;
+    const sara = users.find((u) => u.email === 'evaluator@demo.com')!;
+    await admin.post('/api/questionnaire-responses').send({ positionId: pos.id, userId: sara.id, role: 'JH' }).expect(400);
+    const { id } = (await admin.post('/api/questionnaire-responses').send({ positionId: pos.id, userId: hina.id, role: 'JH' }).expect(201)).body;
+    await admin.post('/api/questionnaire-responses').send({ positionId: pos.id, userId: hina.id, role: 'JH' }).expect(409);
+    const list = (await admin.get(`/api/questionnaire-responses?positionId=${pos.id}`)).body;
+    expect(list).toEqual([expect.objectContaining({ id, role: 'JH', status: 'invited', userName: 'Hina Malik' })]);
+    const ev = await login('evaluator@demo.com');
+    await ev.post('/api/questionnaire-responses').send({ positionId: pos.id, userId: hina.id, role: 'LM' }).expect(403);
+    await admin.delete(`/api/questionnaire-responses/${id}`).expect(200);
   });
 });
