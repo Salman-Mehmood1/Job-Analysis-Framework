@@ -1,16 +1,16 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api, type Evaluation, type OrgUser, type Position } from '../api';
 import { type Filters, SlicerBar, applyFilters } from '../components/Slicers';
 import { ErrorAlert, Modal, StatusBadge, fmt, fmtDate } from '../components/ui';
 import { useData } from '../hooks';
 
-function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (n: number) => void }) {
+function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (n: number, skipped: number) => void }) {
   const positions = useData<Position[]>('/positions');
   const users = useData<OrgUser[]>('/users');
   const evals = useData<Evaluation[]>('/evaluations');
   const [selected, setSelected] = useState<number[]>([]);
-  const [evaluatorId, setEvaluatorId] = useState<number | ''>('');
+  const [evaluatorIds, setEvaluatorIds] = useState<number[]>([]);
   const [dueDate, setDueDate] = useState('');
   const [instructions, setInstructions] = useState('');
   const [q, setQ] = useState('');
@@ -20,6 +20,7 @@ function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (n: num
 
   const evaluators = (users.data ?? []).filter((u) => u.role === 'evaluator' && u.active);
   const covered = new Set((evals.data ?? []).map((e) => e.position.id));
+  const ratersOf = (pid: number) => (evals.data ?? []).filter((e) => e.position.id === pid).map((e) => e.evaluator?.name ?? 'JD analysis');
   const list = (positions.data ?? []).filter(
     (p) =>
       (!onlyUnassigned || !covered.has(p.id)) &&
@@ -27,12 +28,12 @@ function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (n: num
   );
 
   const submit = async () => {
-    if (!evaluatorId || !selected.length) return;
+    if (!evaluatorIds.length || !selected.length) return;
     setBusy(true);
     setError(null);
     try {
-      await api.post('/evaluations', { positionIds: selected, evaluatorId, dueDate: dueDate || null, instructions });
-      onDone(selected.length);
+      const r = await api.post<{ ids: number[]; skipped: unknown[] }>('/evaluations', { positionIds: selected, evaluatorIds, dueDate: dueDate || null, instructions });
+      onDone(r.ids.length, r.skipped.length);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -43,13 +44,22 @@ function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (n: num
   return (
     <Modal title="Assign evaluations" onClose={onClose}>
       <ErrorAlert error={error ?? positions.error ?? users.error} />
-      <div className="form-grid">
-        <label className="field">Evaluator
-          <select value={evaluatorId} onChange={(e) => setEvaluatorId(e.target.value ? Number(e.target.value) : '')}>
-            <option value="">Choose…</option>
-            {evaluators.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.assigned - u.completed} open)</option>)}
-          </select>
-        </label>
+      <div className="field small">Evaluators</div>
+      <div className="row" style={{ gap: 4, marginTop: 4 }}>
+        {evaluators.map((u) => (
+          <label key={u.id} className={`btn choice${evaluatorIds.includes(u.id) ? ' on' : ''}`}>
+            <input type="checkbox" style={{ display: 'none' }} checked={evaluatorIds.includes(u.id)}
+              onChange={(e) => setEvaluatorIds(e.target.checked ? [...evaluatorIds, u.id] : evaluatorIds.filter((x) => x !== u.id))} />
+            {u.name} <span className="small" style={{ opacity: 0.75 }}>({u.assigned - u.completed} open)</span>
+          </label>
+        ))}
+      </div>
+      <p className="small muted" style={{ margin: '6px 0 0' }}>
+        {evaluatorIds.length > 1
+          ? `Each job goes to all ${evaluatorIds.length} evaluators. They score independently, cannot see each other’s evaluations, and management calibrates the results.`
+          : 'Pick more than one evaluator to have a job scored independently and then calibrated.'}
+      </p>
+      <div className="form-grid" style={{ marginTop: 12 }}>
         <label className="field">Due date<input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></label>
       </div>
       <label className="field" style={{ marginTop: 12 }}>Instructions (optional)
@@ -57,7 +67,7 @@ function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (n: num
       </label>
       <div className="row spread" style={{ margin: '12px 0 6px' }}>
         <input placeholder="Search positions…" value={q} onChange={(e) => setQ(e.target.value)} style={{ flex: 1 }} />
-        <label className="row small"><input type="checkbox" checked={onlyUnassigned} onChange={(e) => setOnlyUnassigned(e.target.checked)} /> Not yet evaluated only</label>
+        <label className="row small"><input type="checkbox" checked={onlyUnassigned} onChange={(e) => setOnlyUnassigned(e.target.checked)} /> Not yet assigned only</label>
       </div>
       <div className="table-wrap" style={{ maxHeight: 280, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 6 }}>
         <table>
@@ -72,7 +82,9 @@ function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (n: num
             {list.map((p) => (
               <tr key={p.id}>
                 <td><input type="checkbox" checked={selected.includes(p.id)} onChange={(e) => setSelected(e.target.checked ? [...selected, p.id] : selected.filter((x) => x !== p.id))} /></td>
-                <td>{p.code}</td><td>{p.title}</td><td className="muted small">{p.companyName} / {p.departmentName}</td>
+                <td>{p.code}</td>
+                <td>{p.title}{covered.has(p.id) && <div className="small muted">Already with: {ratersOf(p.id).join(', ')}</div>}</td>
+                <td className="muted small">{p.companyName} / {p.departmentName}</td>
               </tr>
             ))}
             {!list.length && <tr><td colSpan={4} className="muted">No positions. Add them on the Positions page.</td></tr>}
@@ -80,9 +92,9 @@ function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (n: num
         </table>
       </div>
       <div className="row spread" style={{ marginTop: 16 }}>
-        <span className="muted small">{selected.length} selected</span>
-        <button className="primary" disabled={busy || !evaluatorId || !selected.length} onClick={submit}>
-          Assign {selected.length || ''} to evaluator
+        <span className="muted small">{selected.length} job{selected.length === 1 ? '' : 's'} × {evaluatorIds.length} evaluator{evaluatorIds.length === 1 ? '' : 's'}</span>
+        <button className="primary" disabled={busy || !evaluatorIds.length || !selected.length} onClick={submit}>
+          Assign {selected.length * evaluatorIds.length || ''} evaluation{selected.length * evaluatorIds.length === 1 ? '' : 's'}
         </button>
       </div>
     </Modal>
@@ -121,7 +133,14 @@ export default function EvaluationsAdminPage() {
               return (
                 <tr key={r.id} className="clickable" onClick={() => nav(`/admin/evaluations/${r.id}`)}>
                   <td>{r.position.code}</td>
-                  <td>{r.position.title}</td>
+                  <td>
+                    {r.position.title}
+                    {(r.raterCount ?? 1) > 1 && (
+                      <Link className="badge b-neutral" style={{ marginLeft: 6, textDecoration: 'none' }} to={`/admin/jobs/${r.position.id}`} onClick={(e) => e.stopPropagation()}>
+                        {r.raterCount} evaluators · calibration
+                      </Link>
+                    )}
+                  </td>
                   <td className="small">{r.company.name} / {r.department.name}</td>
                   <td>{r.evaluator?.name ?? <span className="muted">JD analysis</span>}</td>
                   <td className={overdue ? 'flag' : ''}>{fmtDate(r.dueDate)}{overdue ? ' (overdue)' : ''}</td>
@@ -138,9 +157,9 @@ export default function EvaluationsAdminPage() {
       {assigning && (
         <AssignModal
           onClose={() => setAssigning(false)}
-          onDone={(n) => {
+          onDone={(n, skipped) => {
             setAssigning(false);
-            setNotice(`Assigned ${n} evaluation${n === 1 ? '' : 's'}.`);
+            setNotice(`Assigned ${n} evaluation${n === 1 ? '' : 's'}.${skipped ? ` Skipped ${skipped} that the evaluator already had.` : ''}`);
             evals.reload();
           }}
         />

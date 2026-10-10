@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { Evaluation, GradeBand } from '../api';
+import type { GradeBand, JobRecord } from '../api';
+import { JobBadges, jobHref, spreadFlag } from './JobBits';
 import { StatusBadge, fmt } from './ui';
 
 type SubGroup = 'none' | 'company' | 'department';
@@ -11,8 +12,9 @@ export function GradeGroups({
   grades,
   linkBase,
 }: {
-  rows: Evaluation[];
+  rows: JobRecord[];
   grades: GradeBand[];
+  /** Panel root, e.g. "/admin". */
   linkBase: string;
 }) {
   const [sub, setSub] = useState<SubGroup>('none');
@@ -38,7 +40,7 @@ export function GradeGroups({
           </label>
         </div>
         <span className="muted small">
-          {scored.length} scored position{scored.length === 1 ? '' : 's'} · {rows.length - scored.length} not yet scored
+          {scored.length} scored job{scored.length === 1 ? '' : 's'} · {rows.length - scored.length} not yet scored
         </span>
       </div>
 
@@ -48,7 +50,7 @@ export function GradeGroups({
           .filter((r) => r.result!.grade === g.grade)
           .sort((a, b) => b.result!.totalPoints! - a.result!.totalPoints!);
         if (!items.length && !showEmpty) return null;
-        const groups = new Map<string, Evaluation[]>();
+        const groups = new Map<string, JobRecord[]>();
         for (const it of items) {
           const k = sub === 'company' ? it.company.name : sub === 'department' ? `${it.department.name} · ${it.company.name}` : '';
           groups.set(k, [...(groups.get(k) ?? []), it]);
@@ -82,14 +84,14 @@ export function GradeGroups({
                       <tbody>
                         {list.map((r) => (
                           <tr key={r.id}>
-                            <td><Link to={`${linkBase}/${r.id}`}>{r.position.code}</Link></td>
-                            <td>{r.position.title}{r.adjustedInputs && <span className="badge b-neutral" style={{ marginLeft: 6 }}>adjusted</span>}</td>
+                            <td><Link to={jobHref(linkBase, r)}>{r.position.code}</Link></td>
+                            <td>{r.position.title}<JobBadges j={r} /></td>
                             <td>{r.company.name}</td>
                             <td>{r.department.name}</td>
                             <td className="num">{fmt(r.result!.totalPoints)}</td>
                             <td>{r.result!.profile}</td>
                             <td><StatusBadge status={r.status} /></td>
-                            <td className="small">{r.result!.checks.join('; ') || 'OK'}</td>
+                            <td className="small">{[...r.result!.checks, spreadFlag(r)].filter(Boolean).join('; ') || 'OK'}</td>
                           </tr>
                         ))}
                       </tbody>

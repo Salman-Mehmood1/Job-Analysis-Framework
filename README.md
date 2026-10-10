@@ -8,7 +8,7 @@ A multi-user web app built from the **Job Evaluation Calculator** workbook (Hay 
 |---|---|---|
 | **Administrator** | `admin` | Set up companies, departments and positions (single or CSV import). Manage users and roles. Assign evaluations to evaluators (one or many at a time, with due date and instructions), reassign them, and see every evaluation in the organisation. Edit the grade structure. Dashboard with slicers. JD analyser. |
 | **Evaluator** | `evaluator` | See only their own assignments. Score each one with the eight Hay elements, with live points, profile, grade and checks. Save drafts and submit. Can ask the JD analyser to suggest levels. **My results** shows their scores and, where management adjusted a score, the final score. |
-| **Management** | `management` | Review queue of submitted evaluations. Adjust levels (the evaluator's original is kept and shown as dashed outlines), approve one or many at once, or return with a comment. Edit the grade structure. Dashboard with slicers. JD analyser. |
+| **Management** | `management` | Review queue of submitted single-evaluator evaluations, plus a **Calibration** queue for jobs with several evaluators. Adjust levels (the evaluator's original is kept and shown as dashed outlines), approve one or many at once, or return with a comment. Edit the grade structure. Dashboard with slicers. JD analyser. |
 
 Each organisation is a separate tenant. Signing up at `/register` creates a new organisation, and the person who signs up becomes its administrator.
 
@@ -27,6 +27,13 @@ Each organisation is a separate tenant. Signing up at `/register` creates a new 
   - With `ANTHROPIC_API_KEY` set, Claude does the analysis using structured output. Without it, a transparent rule-based analyser is used, and the UI says which method ran.
   - Admin and management can save an analysis as an **independent evaluation**, linked to an existing position or a new one. It then goes into review and grading like any other evaluation.
   - Evaluators can apply the suggested levels to one of their assignments.
+- **Multi-evaluator calibration**:
+  - The admin can assign a job to several evaluators at once (or add evaluators to a job later). Each scores it independently and **blind**: evaluators never see other evaluations of the job, or even how many evaluators there are.
+  - Management gets a side-by-side comparison of every submitted evaluation, element by element, with disagreements highlighted.
+  - The **consensus** takes the most common level for each element. Where evaluators are evenly split, the tied levels are chosen so the total stays closest to the evaluators' median score, which keeps a two-evaluator consensus between their scores.
+  - Management can adjust any element of the consensus, add a calibration note, and approve once at least two evaluations are submitted. Approval freezes the agreed levels as the job's official result and marks the evaluations approved. A calibration can be reopened, and individual evaluations can be returned to their evaluator.
+  - Jobs are flagged when evaluators are more than one grade apart, or when the agreed score falls outside the evaluators' range.
+  - Dashboards, grade groupings and exports count **one row per job**: the calibrated result, or the provisional consensus until calibration is approved.
 - **Audit trail**: every assignment, submission, adjustment (old → new points and grade), approval and return is recorded and shown on the evaluation.
 
 ## Running it

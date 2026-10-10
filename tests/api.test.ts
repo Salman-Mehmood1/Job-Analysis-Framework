@@ -30,7 +30,7 @@ describe('roles and visibility', () => {
     const ev = await login('evaluator@demo.com');
     const all = (await admin.get('/api/evaluations').expect(200)).body;
     const mine = (await ev.get('/api/evaluations').expect(200)).body;
-    expect(all.length).toBe(18);
+    expect(all.length).toBe(20);
     expect(mine.length).toBeGreaterThan(0);
     expect(mine.length).toBeLessThan(all.length);
     expect(mine.every((e: { evaluator: { name: string } }) => e.evaluator.name === 'Sara Ahmed')).toBe(true);
@@ -56,7 +56,8 @@ describe('evaluation workflow', () => {
     const ev = await login('evaluator@demo.com');
     const mg = await login('management@demo.com');
 
-    const pos = (await admin.get('/api/positions')).body.find((p: { code: string }) => p.code === 'IT-12');
+    const d = (await admin.get('/api/departments')).body[0];
+    const pos = (await admin.post('/api/positions').send({ code: 'NEW-1', title: 'New Role', companyId: d.companyId, departmentId: d.id }).expect(201)).body;
     const { ids } = (await admin.post('/api/evaluations').send({ positionIds: [pos.id], evaluatorId: 3 }).expect(201)).body;
     const id = ids[0];
 
@@ -144,5 +145,100 @@ describe('job description analysis', () => {
     expect(e.status).toBe('submitted');
     expect(e.source).toBe('jd_analysis');
     expect(e.result.totalPoints).toBe(res.result.totalPoints);
+  });
+});
+
+describe('multi-evaluator calibration', () => {
+  const base = { khShade: '', psPick: 'Low', acShade: '' };
+  const A = { ...base, khTechnical: 'F', khBreadth: 'II', khHumanRelations: '2', psEnvironment: 'E', psChallenge: '4', acFreedom: 'E', acMagnitude: '3', acImpact: 'C' };
+  const B = { ...A, acImpact: 'P', khTechnical: 'E' };
+  const C = { ...A, khTechnical: 'E', acMagnitude: '2' };
+
+  async function setup() {
+    const admin = await login('admin@demo.com');
+    const d = (await admin.get('/api/departments')).body[0];
+    const pos = (await admin.post('/api/positions').send({ code: 'CAL-1', title: 'Calibrated Role', companyId: d.companyId, departmentId: d.id }).expect(201)).body;
+    const users = (await admin.get('/api/users')).body as { id: number; email: string }[];
+    const e1 = users.find((u) => u.email === 'evaluator@demo.com')!.id;
+    const e2 = users.find((u) => u.email === 'evaluator2@demo.com')!.id;
+    await admin.post('/api/users').send({ name: 'Third Rater', email: 'ev3@demo.com', role: 'evaluator', password: 'demo1234' }).expect(201);
+    const e3 = (await admin.get('/api/users')).body.find((u: { email: string }) => u.email === 'ev3@demo.com').id;
+    const res = (await admin.post('/api/evaluations').send({ positionIds: [pos.id], evaluatorIds: [e1, e2, e3] }).expect(201)).body;
+    expect(res.ids).toHaveLength(3);
+    // assigning the same evaluator again is skipped
+    const again = (await admin.post('/api/evaluations').send({ positionIds: [pos.id], evaluatorIds: [e1] }).expect(201)).body;
+    expect(again.ids).toHaveLength(0);
+    expect(again.skipped).toHaveLength(1);
+    return { admin, posId: pos.id as number };
+  }
+
+  async function rate(email: string, posId: number, inputs: object) {
+    const a = await login(email);
+    const mine = (await a.get('/api/evaluations')).body.find((e: { position: { id: number } }) => e.position.id === posId);
+    await a.put(`/api/evaluations/${mine.id}/inputs`).send({ inputs }).expect(200);
+    await a.post(`/api/evaluations/${mine.id}/submit`).expect(200);
+    return { agent: a, id: mine.id as number };
+  }
+
+  it('evaluators are blind to each other and to the evaluator count', async () => {
+    const { posId } = await setup();
+    const { agent, id } = await rate('evaluator@demo.com', posId, A);
+    const mine = (await agent.get('/api/evaluations')).body.filter((e: { position: { id: number } }) => e.position.id === posId);
+    expect(mine).toHaveLength(1);
+    expect(mine[0].raterCount).toBeUndefined();
+    expect((await agent.get(`/api/evaluations/${id}`)).body.raterCount).toBeUndefined();
+    const other = await login('evaluator2@demo.com');
+    await other.get(`/api/evaluations/${id}`).expect(404);
+    await agent.get(`/api/jobs/${posId}`).expect(403);
+    await agent.get('/api/jobs').expect(403);
+  });
+
+  it('builds a most-common-level consensus, lets management adjust, approve and reopen', async () => {
+    const { admin, posId } = await setup();
+    const mg = await login('management@demo.com');
+    await rate('evaluator@demo.com', posId, A);
+    let job = (await mg.get(`/api/jobs/${posId}`)).body;
+    expect(job.mode).toBe('multi');
+    expect(job.status).toBe('in_progress');
+    await mg.post(`/api/jobs/${posId}/calibration/approve`).send({}).expect(400); // only 1 submitted
+
+    const { id: id2 } = await rate('evaluator2@demo.com', posId, B);
+    await rate('ev3@demo.com', posId, C);
+    job = (await mg.get(`/api/jobs/${posId}`)).body;
+    expect(job.status).toBe('submitted');
+    expect(job.basis).toBe('consensus');
+    expect(job.consensus.inputs.khTechnical).toBe('E'); // F, E, E
+    expect(job.consensus.inputs.acMagnitude).toBe('3'); // 3, 3, 2
+    expect(job.consensus.inputs.acImpact).toBe('C'); // C, P, C
+    expect(job.consensus.elements.khTechnical.disagreement).toBe(true);
+    expect(job.spread.minPoints).toBeLessThan(job.spread.maxPoints);
+
+    // individual adjust/approve is routed to calibration
+    await mg.put(`/api/evaluations/${id2}/adjust`).send({ inputs: B }).expect(409);
+    await mg.post(`/api/evaluations/${id2}/approve`).send({}).expect(409);
+    // admin can read but not calibrate
+    await admin.get(`/api/jobs/${posId}`).expect(200);
+    await admin.put(`/api/jobs/${posId}/calibration`).send({ inputs: null }).expect(403);
+
+    const adjusted = { ...job.consensus.inputs, acImpact: 'P' };
+    job = (await mg.put(`/api/jobs/${posId}/calibration`).send({ inputs: adjusted, comment: 'Owns the result' }).expect(200)).body;
+    expect(job.basis).toBe('adjusted_consensus');
+    const adjustedPoints = job.result.totalPoints;
+
+    job = (await mg.post(`/api/jobs/${posId}/calibration/approve`).send({}).expect(200)).body;
+    expect(job.status).toBe('approved');
+    expect(job.basis).toBe('calibrated');
+    expect(job.result.totalPoints).toBe(adjustedPoints);
+    expect(job.evaluations.every((e: { status: string }) => e.status === 'approved')).toBe(true);
+    await mg.post(`/api/evaluations/${id2}/return`).send({ comment: 'x' }).expect(409);
+
+    // dashboards count the job once
+    const jobs = (await mg.get('/api/jobs')).body.filter((j: { id: number }) => j.id === posId);
+    expect(jobs).toHaveLength(1);
+
+    job = (await mg.post(`/api/jobs/${posId}/calibration/reopen`).send({}).expect(200)).body;
+    expect(job.status).toBe('submitted');
+    expect(job.basis).toBe('adjusted_consensus');
+    await mg.post(`/api/evaluations/${id2}/return`).send({ comment: 'Recheck impact' }).expect(200);
   });
 });

@@ -53,6 +53,7 @@ interface EvalRow {
   approved_at: string | null;
   created_at: string;
   updated_at: string;
+  rater_count: number;
 }
 
 const BASE_SELECT = `
@@ -60,7 +61,8 @@ SELECT e.id, e.position_id, p.code AS position_code, p.title AS position_title, 
        p.job_description, p.company_id, c.name AS company_name, p.department_id, d.name AS department_name,
        e.evaluator_id, u.name AS evaluator_name, ab.name AS assigned_by_name, adj.name AS adjusted_by_name,
        e.status, e.due_date, e.instructions, e.inputs, e.rationale, e.source, e.adjusted_inputs,
-       e.adjusted_at, e.review_comment, e.submitted_at, e.approved_at, e.created_at, e.updated_at
+       e.adjusted_at, e.review_comment, e.submitted_at, e.approved_at, e.created_at, e.updated_at,
+       (SELECT COUNT(*) FROM evaluations x WHERE x.position_id = e.position_id) AS rater_count
 FROM evaluations e
 JOIN positions p ON p.id = e.position_id
 JOIN companies c ON c.id = p.company_id
@@ -101,6 +103,8 @@ function enrich(row: EvalRow, grades: GradeBand[]) {
     approvedAt: row.approved_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    /** Evaluations on this job; above 1 means it is calibrated at job level. Never sent to evaluators. */
+    raterCount: row.rater_count as number | undefined,
     /** Evaluator's own score. */
     originalResult: inputs ? evaluate(inputs, grades) : null,
     /** Score after any management adjustment; this is what grading uses. */

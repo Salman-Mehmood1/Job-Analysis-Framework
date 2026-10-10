@@ -9,6 +9,7 @@ import { authRoutes } from './routes/auth';
 import { evaluationRoutes } from './routes/evaluations';
 import { gradeRoutes } from './routes/grades';
 import { jdRoutes } from './routes/jd';
+import { jobRoutes } from './routes/jobs';
 import { orgRoutes } from './routes/org';
 
 export function createApp(db: DB, opts: { staticDir?: string } = {}) {
@@ -35,6 +36,7 @@ export function createApp(db: DB, opts: { staticDir?: string } = {}) {
   app.use('/api/evaluations', evaluationRoutes(db));
   app.use('/api/grades', gradeRoutes(db));
   app.use('/api/jd', jdRoutes(db));
+  app.use('/api/jobs', jobRoutes(db));
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
 
   if (opts.staticDir && fs.existsSync(opts.staticDir)) {

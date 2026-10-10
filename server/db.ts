@@ -107,6 +107,24 @@ CREATE TABLE IF NOT EXISTS jd_analyses (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- One per job (position) that has several evaluators.
+-- adjusted_inputs: management's edits to the consensus (null = use the computed consensus).
+-- final_inputs / included_ids: snapshot taken when the calibration is approved.
+CREATE TABLE IF NOT EXISTS calibrations (
+  id INTEGER PRIMARY KEY,
+  org_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  position_id INTEGER NOT NULL UNIQUE REFERENCES positions(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','approved')),
+  adjusted_inputs TEXT,
+  comment TEXT NOT NULL DEFAULT '',
+  final_inputs TEXT,
+  included_ids TEXT,
+  updated_by INTEGER REFERENCES users(id),
+  updated_at TEXT,
+  approved_by INTEGER REFERENCES users(id),
+  approved_at TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_eval_org ON evaluations(org_id);
 CREATE INDEX IF NOT EXISTS idx_eval_evaluator ON evaluations(evaluator_id);
 CREATE INDEX IF NOT EXISTS idx_pos_org ON positions(org_id);

@@ -1,18 +1,83 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { api, type Evaluation } from '../api';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { api, type Evaluation, type JobRecord } from '../api';
+import { JobBadges, rangeFlag, spreadFlag } from '../components/JobBits';
 import { type Filters, SlicerBar, applyFilters } from '../components/Slicers';
 import { ErrorAlert, StatusBadge, fmt, fmtDate } from '../components/ui';
 import { useData } from '../hooks';
 
 export default function ReviewQueuePage() {
+  const [params, setParams] = useSearchParams();
+  const tab = params.get('tab') === 'calibration' ? 'calibration' : 'single';
+  const jobs = useData<JobRecord[]>('/jobs');
+  const ready = (jobs.data ?? []).filter((j) => j.mode === 'multi' && j.status === 'submitted').length;
+  const single = (useData<Evaluation[]>('/evaluations').data ?? []).filter((e) => (e.raterCount ?? 1) === 1 && e.status === 'submitted').length;
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <h1>Review &amp; calibration</h1>
+          <p className="muted">Jobs with one evaluator are reviewed evaluation by evaluation. Jobs with several evaluators are calibrated: their scores are combined into a consensus you can adjust and approve.</p>
+        </div>
+      </div>
+      <div className="tabs" role="tablist">
+        <button role="tab" aria-selected={tab === 'single'} className={tab === 'single' ? 'on' : ''} onClick={() => setParams({})}>Single-evaluator reviews ({single})</button>
+        <button role="tab" aria-selected={tab === 'calibration'} className={tab === 'calibration' ? 'on' : ''} onClick={() => setParams({ tab: 'calibration' })}>Calibration ({ready} ready)</button>
+      </div>
+      {tab === 'single' ? <SingleQueue /> : <CalibrationQueue jobs={jobs.data ?? []} error={jobs.error} />}
+    </div>
+  );
+}
+
+function CalibrationQueue({ jobs, error }: { jobs: JobRecord[]; error: string | null }) {
+  const nav = useNavigate();
+  const [filters, setFilters] = useState<Filters>({ status: ['submitted'] });
+  const multi = jobs.filter((j) => j.mode === 'multi');
+  const rows = useMemo(() => applyFilters(multi, filters), [multi, filters]);
+  return (
+    <div>
+      <ErrorAlert error={error} />
+      <SlicerBar rows={multi} filters={filters} onChange={setFilters} dims={['status', 'company', 'department', 'role', 'grade', 'evaluator']} />
+      <div className="card table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Code</th><th>Role</th><th>Company / department</th><th>Submitted</th><th className="num">Evaluator range</th>
+              <th className="num">Grades</th><th>Status</th><th className="num">Agreed pts</th><th className="num">Grade</th><th>Flags</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((j) => (
+              <tr key={j.id} className="clickable" onClick={() => nav(`/management/jobs/${j.id}`)}>
+                <td>{j.position.code}</td>
+                <td>{j.position.title}<JobBadges j={j} /></td>
+                <td className="small">{j.company.name} / {j.department.name}</td>
+                <td>{j.completeCount} of {j.evaluationCount}</td>
+                <td className="num">{j.spread ? `${fmt(j.spread.minPoints)}–${fmt(j.spread.maxPoints)}` : '—'}</td>
+                <td className="num">{j.spread ? (j.spread.minGrade === j.spread.maxGrade ? j.spread.minGrade : `${j.spread.minGrade}–${j.spread.maxGrade}`) : '—'}</td>
+                <td><StatusBadge status={j.status} /></td>
+                <td className="num">{fmt(j.result?.totalPoints)}</td>
+                <td className="num">{j.result?.grade ?? '—'}</td>
+                <td className="small"><span className="flag">{[spreadFlag(j), rangeFlag(j)].filter(Boolean).join('; ')}</span></td>
+              </tr>
+            ))}
+            {!rows.length && <tr><td colSpan={10} className="muted">No jobs match. Clear the status slicer to see every multi-evaluator job.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function SingleQueue() {
   const nav = useNavigate();
   const evals = useData<Evaluation[]>('/evaluations');
   const [filters, setFilters] = useState<Filters>({ status: ['submitted'] });
   const [picked, setPicked] = useState<number[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const rows = useMemo(() => applyFilters(evals.data ?? [], filters), [evals.data, filters]);
+  const singles = useMemo(() => (evals.data ?? []).filter((e) => (e.raterCount ?? 1) === 1), [evals.data]);
+  const rows = useMemo(() => applyFilters(singles, filters), [singles, filters]);
   const approvable = rows.filter((r) => r.status === 'submitted');
 
   const bulkApprove = async () => {
@@ -29,16 +94,13 @@ export default function ReviewQueuePage() {
 
   return (
     <div>
-      <div className="page-head">
-        <div>
-          <h1>Review queue</h1>
-          <p className="muted">Submitted evaluations waiting for management. Open one to adjust levels, approve or return it.</p>
-        </div>
+      <div className="row spread" style={{ marginBottom: 12 }}>
+        <span className="muted">Open an evaluation to adjust levels, approve or return it.</span>
         <button className="primary" disabled={!picked.length} onClick={bulkApprove}>Approve selected ({picked.length})</button>
       </div>
       {notice && <div className="alert ok">{notice}</div>}
       <ErrorAlert error={error ?? evals.error} />
-      <SlicerBar rows={evals.data ?? []} filters={filters} onChange={setFilters} dims={['status', 'company', 'department', 'role', 'grade', 'evaluator']} />
+      <SlicerBar rows={singles} filters={filters} onChange={setFilters} dims={['status', 'company', 'department', 'role', 'grade', 'evaluator']} />
       <div className="card table-wrap">
         <table>
           <thead>

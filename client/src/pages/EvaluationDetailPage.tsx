@@ -16,6 +16,8 @@ const ACTION_LABEL: Record<string, string> = {
   approved: 'Approved',
   returned: 'Returned to evaluator',
   created_from_jd_analysis: 'Created from job description analysis',
+  calibrated: 'Approved through calibration',
+  calibration_reopened: 'Calibration reopened',
 };
 
 function historyDetail(action: string, d: Record<string, unknown>) {
@@ -48,7 +50,8 @@ export default function EvaluationDetailPage() {
     }
   }, [e]);
 
-  const reviewable = isMgmt && e && ['submitted', 'approved'].includes(e.status);
+  const multi = (e?.raterCount ?? 1) > 1;
+  const reviewable = isMgmt && e && !multi && ['submitted', 'approved'].includes(e.status);
   const draftResult = useMemo(() => (draft && grades.data ? evaluate(draft, grades.data.grades) : null), [draft, grades.data]);
   const dirty = draft && e && JSON.stringify(draft) !== JSON.stringify(e.adjustedInputs ?? e.inputs);
 
@@ -71,7 +74,7 @@ export default function EvaluationDetailPage() {
   if (ev.error) return <ErrorAlert error={ev.error} />;
   if (!e || !draft) return <div className="muted">Loading…</div>;
 
-  const back = user.role === 'admin' ? '/admin/evaluations' : '/management/review';
+  const back = multi ? `/${user.role}/jobs/${e.position.id}` : user.role === 'admin' ? '/admin/evaluations' : '/management/review';
 
   return (
     <div>
@@ -105,6 +108,12 @@ export default function EvaluationDetailPage() {
       </div>
       <ErrorAlert error={error} />
       {notice && <div className="alert ok">{notice}</div>}
+      {multi && (
+        <div className="alert info">
+          This job has {e.raterCount} evaluators. Their scores are combined and calibrated at job level.{' '}
+          <Link to={`/${user.role}/jobs/${e.position.id}`}>Open the calibration</Link>
+        </div>
+      )}
 
       <div className="grid grid-2" style={{ gridTemplateColumns: 'minmax(0, 2fr) minmax(280px, 1fr)' }}>
         <div className="stack">
@@ -149,7 +158,7 @@ export default function EvaluationDetailPage() {
               ) : (
                 <p className="muted">The evaluator has not entered any levels yet.</p>
               )}
-              {isMgmt && <p className="small muted" style={{ marginTop: 8 }}>Levels can be reviewed once the evaluator submits.</p>}
+              {isMgmt && !multi && <p className="small muted" style={{ marginTop: 8 }}>Levels can be reviewed once the evaluator submits.</p>}
             </div>
           )}
 

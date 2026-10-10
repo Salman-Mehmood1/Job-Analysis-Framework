@@ -113,6 +113,32 @@ export function seedDemo(db: DB) {
       if (['submitted', 'approved'].includes(status)) logHistory(db, evId, evaluator, 'submitted');
       if (status === 'approved') logHistory(db, evId, mgmt, 'approved');
     }
+
+    // A job rated independently by both evaluators, ready for calibration.
+    const procDept = depts.get('Acme Manufacturing/Finance')!;
+    const procId = Number(
+      db
+        .prepare('INSERT INTO positions (org_id, company_id, department_id, code, title, job_family, job_description) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(orgId, companies.get('Acme Manufacturing')!, procDept, 'FIN-15', 'Procurement Manager', 'Supply chain',
+          'Leads a team of 6 buyers, negotiates supplier contracts and is accountable for $30M annual spend. Degree and 8 years experience. Reports to the Finance Director.')
+        .lastInsertRowid,
+    );
+    const ratings: [number, Lv][] = [
+      [ev1, ['F', 'I', '3', 'E', '3', 'E', '3', 'S']],
+      [ev2, ['E', 'I', '3', 'E', '4', 'E', '3', 'P']],
+    ];
+    for (const [who, lv] of ratings) {
+      const evId = Number(
+        db
+          .prepare(
+            `INSERT INTO evaluations (org_id, position_id, evaluator_id, assigned_by, status, due_date, inputs, submitted_at)
+             VALUES (?, ?, ?, ?, 'submitted', date('now', '+14 days'), ?, ?)`,
+          )
+          .run(orgId, procId, who, admin, JSON.stringify(toInputs(lv)), new Date().toISOString()).lastInsertRowid,
+      );
+      logHistory(db, evId, admin, 'assigned', { evaluatorId: who });
+      logHistory(db, evId, who, 'submitted');
+    }
   })();
   console.log('Seeded demo organisation (admin@demo.com / management@demo.com / evaluator@demo.com, password demo1234)');
 }

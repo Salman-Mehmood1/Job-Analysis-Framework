@@ -39,7 +39,53 @@ export interface Evaluation {
   updatedAt: string;
   originalResult: EvaluationResult | null;
   result: EvaluationResult | null;
+  /** Number of evaluations on this job (admin/management only). */
+  raterCount?: number;
   history?: { id: number; action: string; details: Record<string, unknown>; at: string; user_name: string; user_role: string }[];
+}
+
+export type ElementKey = keyof EvaluationInputs;
+export interface ElementConsensus {
+  level: string;
+  votes: number;
+  total: number;
+  distribution: Record<string, number>;
+  disagreement: boolean;
+}
+
+/** One record per job (position), combining its evaluations. */
+export interface JobRecord {
+  id: number;
+  position: Evaluation['position'];
+  company: { id: number; name: string };
+  department: { id: number; name: string };
+  mode: 'single' | 'multi';
+  evaluationId: number | null;
+  evaluators: { id: number | null; name: string }[];
+  evaluationCount: number;
+  completeCount: number;
+  status: Status;
+  basis: 'evaluation' | 'consensus' | 'adjusted_consensus' | 'calibrated';
+  result: EvaluationResult | null;
+  effectiveInputs: EvaluationInputs | null;
+  adjusted: boolean;
+  spread: { minPoints: number; maxPoints: number; minGrade: number; maxGrade: number } | null;
+  calibration: {
+    status: 'open' | 'approved';
+    adjustedInputs: EvaluationInputs | null;
+    finalInputs: EvaluationInputs | null;
+    includedIds: number[];
+    comment: string;
+    updatedAt: string | null;
+    updatedBy: string | null;
+    approvedAt: string | null;
+    approvedBy: string | null;
+  } | null;
+}
+
+export interface JobDetail extends JobRecord {
+  consensus: { inputs: EvaluationInputs; elements: Record<ElementKey, ElementConsensus>; raters: number } | null;
+  evaluations: Evaluation[];
 }
 
 export interface OrgUser {

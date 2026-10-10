@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import type { Evaluation, GradeBand } from '../api';
+import type { GradeBand, JobRecord } from '../api';
+import { BASIS_LABEL, JobBadges, jobHref, spreadFlag } from '../components/JobBits';
 import { GradeGroups } from '../components/GradeGroups';
 import { type Dim, type Filters, SlicerBar, applyFilters, dimValue } from '../components/Slicers';
 import { ErrorAlert, Kpi, STATUS_LABEL, StatusBadge, downloadCsv, fmt } from '../components/ui';
@@ -29,12 +30,12 @@ function ChartTip({ active, payload, label, unit }: { active?: boolean; payload?
 export default function AnalyticsPage() {
   const user = useUser();
   const nav = useNavigate();
-  const evals = useData<Evaluation[]>('/evaluations');
+  const evals = useData<JobRecord[]>('/jobs');
   const grades = useData<{ grades: GradeBand[] }>('/grades');
   const [filters, setFilters] = useState<Filters>({});
   const [tab, setTab] = useState<Tab>('overview');
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 }>({ key: 'points', dir: -1 });
-  const linkBase = user.role === 'admin' ? '/admin/evaluations' : '/management/evaluations';
+  const linkBase = user.role === 'admin' ? '/admin' : '/management';
 
   const all = evals.data ?? [];
   const rows = useMemo(() => applyFilters(all, filters), [all, filters]);
@@ -71,7 +72,7 @@ export default function AnalyticsPage() {
   const avg = scored.length ? Math.round(scored.reduce((s, r) => s + r.result!.totalPoints!, 0) / scored.length) : null;
   const flagged = scored.filter((r) => r.result!.checks.length).length;
 
-  const sortVal = (r: Evaluation, k: string): string | number =>
+  const sortVal = (r: JobRecord, k: string): string | number =>
     k === 'points' ? r.result?.totalPoints ?? -1 : k === 'grade' ? r.result?.grade ?? -1 : k === 'code' ? r.position.code : dimValue(r, k as Dim);
   const tableRows = [...rows].sort((a, b) => {
     const x = sortVal(a, sort.key), y = sortVal(b, sort.key);
@@ -85,15 +86,15 @@ export default function AnalyticsPage() {
 
   const exportCsv = () =>
     downloadCsv('job-evaluations.csv', [
-      ['Code', 'Role', 'Job family', 'Company', 'Department', 'Evaluator', 'Status', 'KH tech', 'KH breadth', 'KH HR', 'KH shade', 'PS env', 'PS challenge', 'PS pick', 'AC freedom', 'AC magnitude', 'AC impact', 'AC shade', 'KH pts', 'PS %', 'PS pts', 'AC pts', 'Total', 'Profile', 'Grade', 'Career level', 'Checks', 'Adjusted by management', 'Original total'],
+      ['Code', 'Role', 'Job family', 'Company', 'Department', 'Evaluators', 'Result basis', 'Status', 'KH tech', 'KH breadth', 'KH HR', 'KH shade', 'PS env', 'PS challenge', 'PS pick', 'AC freedom', 'AC magnitude', 'AC impact', 'AC shade', 'KH pts', 'PS %', 'PS pts', 'AC pts', 'Total', 'Profile', 'Grade', 'Career level', 'Checks', 'Adjusted by management', 'Lowest evaluator total', 'Highest evaluator total'],
       ...tableRows.map((r) => {
-        const i = r.adjustedInputs ?? r.inputs;
+        const i = r.effectiveInputs;
         const x = r.result;
         return [
-          r.position.code, r.position.title, r.position.jobFamily, r.company.name, r.department.name, r.evaluator?.name ?? 'JD analysis', STATUS_LABEL[r.status],
+          r.position.code, r.position.title, r.position.jobFamily, r.company.name, r.department.name, r.evaluators.map((e) => e.name).join('; '), BASIS_LABEL[r.basis], STATUS_LABEL[r.status],
           i?.khTechnical, i?.khBreadth, i?.khHumanRelations, i?.khShade, i?.psEnvironment, i?.psChallenge, i?.psPick, i?.acFreedom, i?.acMagnitude, i?.acImpact, i?.acShade,
           x?.khPoints, x?.psPercent, x?.psPoints, x?.acPoints, x?.totalPoints, x?.profile, x?.grade, x?.careerLevel, x?.checks.join('; '),
-          r.adjustedInputs ? 'Yes' : 'No', r.originalResult?.totalPoints,
+          r.adjusted ? 'Yes' : 'No', r.spread?.minPoints, r.spread?.maxPoints,
         ];
       }),
     ]);
@@ -103,7 +104,7 @@ export default function AnalyticsPage() {
       <div className="page-head">
         <div>
           <h1>{user.role === 'admin' ? 'Organisation dashboard' : 'Management dashboard'}</h1>
-          <p className="muted">All evaluations in your organisation. Use the slicers to focus on a company, department, role or grade.</p>
+          <p className="muted">One row per job. Jobs with several evaluators use their calibrated result, or the provisional consensus until calibration is approved. Use the slicers to focus on a company, department, role or grade.</p>
         </div>
         <button onClick={exportCsv} disabled={!rows.length}>Export CSV</button>
       </div>
@@ -112,12 +113,13 @@ export default function AnalyticsPage() {
       <SlicerBar rows={all} filters={filters} onChange={setFilters} />
 
       <div className="grid grid-kpi" style={{ marginBottom: 16 }}>
-        <Kpi label="Positions in view" value={fmt(rows.length)} />
+        <Kpi label="Jobs in view" value={fmt(rows.length)} />
         <Kpi label="Scored" value={fmt(scored.length)} />
         <Kpi label="Approved" value={fmt(statusCounts.find((s) => s.s === 'approved')!.n)} />
         <Kpi label="Awaiting review" value={fmt(statusCounts.find((s) => s.s === 'submitted')!.n)} />
         <Kpi label="Average points" value={fmt(avg)} />
         <Kpi label="Flagged by checks" value={fmt(flagged)} />
+        <Kpi label="Evaluators >1 grade apart" value={fmt(rows.filter((r) => spreadFlag(r)).length)} />
       </div>
 
       <div className="tabs" role="tablist">
@@ -192,7 +194,7 @@ export default function AnalyticsPage() {
               <thead><tr><th>Role</th><th>Company</th><th className="num">Points</th><th className="num">Grade</th></tr></thead>
               <tbody>
                 {[...scored].sort((a, b) => b.result!.totalPoints! - a.result!.totalPoints!).slice(0, 8).map((r) => (
-                  <tr key={r.id} className="clickable" onClick={() => nav(`${linkBase}/${r.id}`)}>
+                  <tr key={r.id} className="clickable" onClick={() => nav(jobHref(linkBase, r))}>
                     <td>{r.position.title}</td><td className="muted">{r.company.name}</td>
                     <td className="num">{fmt(r.result!.totalPoints)}</td><td className="num">{r.result!.grade}</td>
                   </tr>
@@ -211,24 +213,24 @@ export default function AnalyticsPage() {
             <thead>
               <tr>
                 {th('code', 'Code')}{th('role', 'Role')}{th('company', 'Company')}{th('department', 'Department')}
-                {th('evaluator', 'Evaluator')}{th('status', 'Status')}{th('points', 'Points', true)}{th('grade', 'Grade', true)}<th>Profile</th><th>Checks</th>
+                {th('evaluator', 'Evaluators')}{th('status', 'Status')}{th('points', 'Points', true)}{th('grade', 'Grade', true)}<th>Profile</th><th>Checks</th>
               </tr>
             </thead>
             <tbody>
               {tableRows.map((r) => (
-                <tr key={r.id} className="clickable" onClick={() => nav(`${linkBase}/${r.id}`)}>
+                <tr key={r.id} className="clickable" onClick={() => nav(jobHref(linkBase, r))}>
                   <td>{r.position.code}</td>
-                  <td>{r.position.title}{r.adjustedInputs && <span className="badge b-neutral" style={{ marginLeft: 6 }}>adjusted</span>}</td>
+                  <td>{r.position.title}<JobBadges j={r} /></td>
                   <td>{r.company.name}</td><td>{r.department.name}</td>
-                  <td>{r.evaluator?.name ?? <span className="muted">JD analysis</span>}</td>
+                  <td>{r.evaluators.map((e) => e.name).join(', ')}</td>
                   <td><StatusBadge status={r.status} /></td>
                   <td className="num">{fmt(r.result?.totalPoints)}</td>
                   <td className="num">{r.result?.grade ?? '—'}</td>
                   <td>{r.result?.profile ?? '—'}</td>
-                  <td className="small">{r.result?.complete ? r.result.checks.join('; ') || 'OK' : ''}</td>
+                  <td className="small">{r.result?.complete ? [...r.result.checks, spreadFlag(r)].filter(Boolean).join('; ') || 'OK' : ''}</td>
                 </tr>
               ))}
-              {!tableRows.length && <tr><td colSpan={10} className="muted">No evaluations match the current slicers.</td></tr>}
+              {!tableRows.length && <tr><td colSpan={10} className="muted">No jobs match the current slicers.</td></tr>}
             </tbody>
           </table>
         </div>

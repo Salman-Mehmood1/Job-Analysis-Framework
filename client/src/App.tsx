@@ -9,6 +9,7 @@ import EvaluationsAdminPage from './pages/EvaluationsAdminPage';
 import EvaluatePage from './pages/EvaluatePage';
 import GradesPage from './pages/GradesPage';
 import JdAnalyzerPage from './pages/JdAnalyzerPage';
+import JobCalibrationPage from './pages/JobCalibrationPage';
 import { MyEvaluationsPage, MyResultsPage } from './pages/EvaluatorPages';
 import OrganizationPage from './pages/OrganizationPage';
 import PositionsPage from './pages/PositionsPage';
@@ -34,7 +35,7 @@ const NAV: Record<Role, { to: string; label: string; end?: boolean }[]> = {
   ],
   management: [
     { to: '/management', label: 'Dashboard', end: true },
-    { to: '/management/review', label: 'Review queue' },
+    { to: '/management/review', label: 'Review & calibration' },
     { to: '/management/grades', label: 'Grade structure' },
     { to: '/management/jd', label: 'JD analyser' },
   ],
@@ -92,6 +93,7 @@ export default function App() {
         <Route index element={<AnalyticsPage />} />
         <Route path="evaluations" element={<EvaluationsAdminPage />} />
         <Route path="evaluations/:id" element={<EvaluationDetailPage />} />
+        <Route path="jobs/:positionId" element={<JobCalibrationPage />} />
         <Route path="positions" element={<PositionsPage />} />
         <Route path="organization" element={<OrganizationPage />} />
         <Route path="users" element={<UsersPage />} />
@@ -110,6 +112,7 @@ export default function App() {
         <Route index element={<AnalyticsPage />} />
         <Route path="review" element={<ReviewQueuePage />} />
         <Route path="evaluations/:id" element={<EvaluationDetailPage />} />
+        <Route path="jobs/:positionId" element={<JobCalibrationPage />} />
         <Route path="grades" element={<GradesPage />} />
         <Route path="jd" element={<JdAnalyzerPage />} />
       </Route>

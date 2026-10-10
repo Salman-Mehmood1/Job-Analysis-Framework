@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Evaluation } from '../api';
+import type { Evaluation, JobRecord } from '../api';
 import { STATUS_LABEL } from './ui';
 
 export type Dim = 'company' | 'department' | 'role' | 'family' | 'grade' | 'career' | 'status' | 'evaluator';
@@ -18,8 +18,19 @@ export const DIM_LABEL: Record<Dim, string> = {
 
 const NONE = '(none)';
 
-/** The value an evaluation has on each slicer dimension. */
-export function dimValue(e: Evaluation, d: Dim): string {
+/** Slicers work on individual evaluations or on job-level records. */
+export type SliceRow = Evaluation | JobRecord;
+
+const evaluatorNames = (r: SliceRow) =>
+  'evaluators' in r ? r.evaluators.map((e) => e.name) : [r.evaluator?.name ?? 'JD analysis'];
+
+/** The values a row has on a slicer dimension (a job can have several evaluators). */
+export function dimValues(e: SliceRow, d: Dim): string[] {
+  return d === 'evaluator' ? evaluatorNames(e) : [dimValue(e, d)];
+}
+
+/** The single value a row has on a dimension (evaluators joined). */
+export function dimValue(e: SliceRow, d: Dim): string {
   switch (d) {
     case 'company': return e.company.name;
     case 'department': return `${e.department.name}`;
@@ -28,13 +39,13 @@ export function dimValue(e: Evaluation, d: Dim): string {
     case 'grade': return e.result?.grade != null ? String(e.result.grade) : 'Ungraded';
     case 'career': return e.result?.careerLevel || 'Ungraded';
     case 'status': return e.status;
-    case 'evaluator': return e.evaluator?.name ?? 'JD analysis';
+    case 'evaluator': return evaluatorNames(e).join(', ');
   }
 }
 
-export function applyFilters(rows: Evaluation[], f: Filters, except?: Dim) {
+export function applyFilters<T extends SliceRow>(rows: T[], f: Filters, except?: Dim): T[] {
   return rows.filter((e) =>
-    (Object.keys(f) as Dim[]).every((d) => d === except || !f[d]?.length || f[d]!.includes(dimValue(e, d))),
+    (Object.keys(f) as Dim[]).every((d) => d === except || !f[d]?.length || dimValues(e, d).some((v) => f[d]!.includes(v))),
   );
 }
 
@@ -50,7 +61,7 @@ function Slicer({
   onChange,
 }: {
   dim: Dim;
-  rows: Evaluation[];
+  rows: SliceRow[];
   filters: Filters;
   onChange: (vals: string[]) => void;
 }) {
@@ -62,8 +73,7 @@ function Slicer({
   const options = useMemo(() => {
     const counts = new Map<string, number>();
     for (const e of applyFilters(rows, filters, dim)) {
-      const v = dimValue(e, dim);
-      counts.set(v, (counts.get(v) ?? 0) + 1);
+      for (const v of dimValues(e, dim)) counts.set(v, (counts.get(v) ?? 0) + 1);
     }
     for (const s of selected) if (!counts.has(s)) counts.set(s, 0);
     return sortValues(dim, [...counts.keys()]).map((v) => ({ v, n: counts.get(v)! }));
@@ -113,7 +123,7 @@ export function SlicerBar({
   onChange,
   dims = ['company', 'department', 'role', 'grade', 'family', 'career', 'status', 'evaluator'],
 }: {
-  rows: Evaluation[];
+  rows: SliceRow[];
   filters: Filters;
   onChange: (f: Filters) => void;
   dims?: Dim[];
