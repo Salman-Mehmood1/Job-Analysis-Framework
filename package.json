@@ -5,10 +5,12 @@
   "type": "module",
   "description": "Multi-panel job evaluation app (Hay point-factor method) with admin, evaluator and management panels.",
   "scripts": {
-    "dev": "concurrently -n api,web -c blue,green \"tsx watch server/index.ts\" \"vite\"",
+    "dev": "concurrently -n api,web -c blue,green \"tsx watch server/index.ts --dev\" \"vite\"",
     "build": "vite build",
-    "start": "NODE_ENV=production tsx server/index.ts",
+    "start": "vite build && tsx server/index.ts",
+    "serve": "tsx server/index.ts",
     "seed": "tsx server/seed.ts",
+    "reset-demo": "tsx server/seed.ts --reset",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p ."
   },

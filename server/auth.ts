@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { NextFunction, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 
@@ -26,13 +28,29 @@ declare global {
 
 export const COOKIE = 'je_session';
 
+let cachedSecret: string | null = null;
+
+/**
+ * Key that signs session cookies: JWT_SECRET if set, otherwise a random key
+ * generated once and kept next to the database, so sign-ins survive restarts.
+ */
 function secret(): string {
   if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('JWT_SECRET must be set in production');
+  if (cachedSecret) return cachedSecret;
+  const dbFile = process.env.DB_FILE ?? path.resolve('data/job-evaluation.db');
+  if (dbFile === ':memory:') return (cachedSecret = crypto.randomBytes(32).toString('hex'));
+  const file = path.join(path.dirname(dbFile), '.session-secret');
+  try {
+    cachedSecret = fs.readFileSync(file, 'utf8').trim();
+  } catch {
+    cachedSecret = '';
   }
-  // Dev-only: random per process, so sessions reset on restart.
-  return (globalThis as { __jeDevSecret?: string }).__jeDevSecret ??= crypto.randomBytes(32).toString('hex');
+  if (cachedSecret.length < 32) {
+    cachedSecret = crypto.randomBytes(32).toString('hex');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, cachedSecret, { mode: 0o600 });
+  }
+  return cachedSecret;
 }
 
 export function issueSession(res: Response, user: AuthUser) {
@@ -40,7 +58,8 @@ export function issueSession(res: Response, user: AuthUser) {
   res.cookie(COOKIE, token, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    // Set COOKIE_SECURE=true when the app is served over HTTPS.
+    secure: process.env.COOKIE_SECURE === 'true',
     maxAge: 12 * 3600 * 1000,
   });
 }

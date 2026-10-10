@@ -48,28 +48,33 @@ Each organisation is a separate tenant. Signing up at `/register` creates a new 
 
 ## Running it
 
-Requires Node 22+.
+Requires Node 22+ and Git. The same commands work on Windows, macOS and Linux.
 
 ```bash
+git clone https://github.com/salman-mehmood1/job-analysis-framework.git
+cd job-analysis-framework
+git checkout claude/job-evaluation-app-qx0kax
 npm install
-npm run dev          # API on :3001, UI on http://localhost:5173
+npm start            # builds the UI, then serves everything on http://localhost:3001
 ```
 
-On first start a demo organisation is seeded. Sign in from the login page buttons, or use any of these with password `demo1234`:
-
-- `admin@demo.com`
-- `management@demo.com`
-- `evaluator@demo.com`
-- `evaluator2@demo.com`
-
-Production:
+**Getting a newer version.** Stop the app (Ctrl+C), then:
 
 ```bash
-npm run build
-JWT_SECRET=<long random string> SEED_DEMO=false npm start   # serves UI + API on :3001
+git pull
+npm install          # picks up any new libraries
+npm start            # always rebuilds the UI first, so changes show up
 ```
 
-See `.env.example` for all settings. Data is stored in SQLite (`data/job-evaluation.db` by default).
+If the browser still shows the old screens, do a hard refresh (Ctrl+Shift+R, or Cmd+Shift+R on a Mac).
+
+On first start a demo organisation is created. Sign in from the login page buttons, or with any of these (password `demo1234`): `admin@demo.com`, `management@demo.com`, `evaluator@demo.com`, `evaluator2@demo.com`, `kamran@demo.com` (line manager), `hina@demo.com` (job holder). Demo accounts added in later versions are added to an existing demo database automatically on start.
+
+**Starting the demo again from scratch:** stop the app, run `npm run reset-demo`, then `npm start`. This **deletes all data** in `data/job-evaluation.db`.
+
+**Development mode:** `npm run dev` serves the UI live with instant reloads on **http://localhost:5173**. The API runs on port 3001 in the background; opening port 3001 in that mode redirects to 5173.
+
+**For a shared server:** set `SEED_DEMO=false` before the first start so no demo data is created. Set `JWT_SECRET` to a long random string (otherwise a key is generated and kept in `data/.session-secret`). Set `COOKIE_SECURE=true` when the app is served over HTTPS. Back up the `data` folder. See `.env.example` for all settings.
 
 ## Development
 

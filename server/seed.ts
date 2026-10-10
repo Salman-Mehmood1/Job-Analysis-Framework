@@ -6,6 +6,8 @@
  *   admin@demo.com · management@demo.com · evaluator@demo.com · evaluator2@demo.com
  */
 import bcrypt from 'bcryptjs';
+import fs from 'node:fs';
+import path from 'node:path';
 import { EMPTY_INPUTS, type EvaluationInputs } from '../shared/engine';
 import { type DB, createStructure, openDb, seedDefaultGrades } from './db';
 import { logHistory } from './services';
@@ -203,7 +205,55 @@ export function seedDemo(db: DB) {
   console.log('Seeded demo organisation (admin@demo.com / management@demo.com / evaluator@demo.com, password demo1234)');
 }
 
-// `npm run seed`
+/**
+ * Databases created by an earlier version of the demo miss accounts added later.
+ * Adds the job holder / line manager demo accounts (and their Head of IT questionnaire
+ * requests) to the existing demo organisation. Never touches other organisations.
+ */
+export function topUpDemo(db: DB) {
+  const demo = db.prepare("SELECT org_id FROM users WHERE email = 'admin@demo.com'").get() as { org_id: number } | undefined;
+  if (!demo) return;
+  const orgId = demo.org_id;
+  const admin = (db.prepare("SELECT id FROM users WHERE email = 'admin@demo.com'").get() as { id: number }).id;
+  const added: string[] = [];
+  const ensure = (name: string, email: string) => {
+    const row = db.prepare('SELECT id, org_id FROM users WHERE email = ?').get(email) as { id: number; org_id: number } | undefined;
+    if (row) return row.org_id === orgId ? row.id : null;
+    added.push(email);
+    return Number(
+      db
+        .prepare("INSERT INTO users (org_id, name, email, password_hash, role) VALUES (?, ?, ?, ?, 'respondent')")
+        .run(orgId, name, email, bcrypt.hashSync('demo1234', 10)).lastInsertRowid,
+    );
+  };
+  db.transaction(() => {
+    const jobHolder = ensure('Hina Malik', 'hina@demo.com');
+    const lineManager = ensure('Kamran Ali', 'kamran@demo.com');
+    const headOfIt = db.prepare("SELECT id FROM positions WHERE org_id = ? AND code = 'IT-12'").get(orgId) as { id: number } | undefined;
+    if (!headOfIt || !jobHolder || !lineManager) return;
+    if (db.prepare('SELECT 1 FROM questionnaire_responses WHERE position_id = ?').get(headOfIt.id)) return;
+    db.prepare(
+      "UPDATE evaluations SET method = 'questionnaire' WHERE position_id = ? AND status IN ('assigned','in_progress','returned') AND inputs IS NULL",
+    ).run(headOfIt.id);
+    const invite = db.prepare(
+      "INSERT INTO questionnaire_responses (org_id, position_id, user_id, role, due_date, invited_by) VALUES (?, ?, ?, ?, date('now', '+7 days'), ?)",
+    );
+    invite.run(orgId, headOfIt.id, lineManager, 'LM', admin);
+    invite.run(orgId, headOfIt.id, jobHolder, 'JH', admin);
+  })();
+  if (added.length) console.log(`Added demo accounts to your existing demo organisation: ${added.join(', ')} (password demo1234)`);
+}
+
+// `npm run seed` adds the demo organisation if the database is empty;
+// `npm run reset-demo` deletes the database first and starts again from the demo data.
 if (process.argv[1]?.endsWith('seed.ts')) {
-  seedDemo(openDb());
+  const file = process.env.DB_FILE ?? path.resolve('data/job-evaluation.db');
+  if (process.argv.includes('--reset') && file !== ':memory:') {
+    for (const f of [file, `${file}-wal`, `${file}-shm`]) fs.rmSync(f, { force: true });
+    console.log(`Deleted ${file}`);
+  }
+  const db = openDb(file);
+  seedDemo(db);
+  topUpDemo(db);
+  db.close();
 }
