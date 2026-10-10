@@ -61,6 +61,7 @@ export function EvaluationForm({
   readOnly,
   result,
   compareTo,
+  compareLabel = 'was',
   reasons,
 }: {
   inputs: EvaluationInputs;
@@ -69,6 +70,8 @@ export function EvaluationForm({
   result: EvaluationResult | null;
   /** Show these levels as dashed outlines (e.g. the evaluator's original when management adjusts). */
   compareTo?: EvaluationInputs | null;
+  /** Wording before the compared level, e.g. "was" or "you:". */
+  compareLabel?: string;
   reasons?: Record<string, { level: string; reason: string }>;
 }) {
   const [hover, setHover] = useState<{ key: Key; value: string } | null>(null);
@@ -100,7 +103,7 @@ export function EvaluationForm({
                 <div className="element-label">
                   <span>{el.label}</span>
                   {compareTo && (compareTo[el.key] as string) !== current && (
-                    <span className="flag">was {optionLabel(compareTo[el.key] as string)}</span>
+                    <span className="flag">{compareLabel} {optionLabel(compareTo[el.key] as string)}</span>
                   )}
                 </div>
                 <div className="choices" role="radiogroup" aria-label={el.label}>

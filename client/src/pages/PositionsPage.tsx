@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { api, type Company, type Department, type Position } from '../api';
+import { JD_FILE_ACCEPT, api, extractJdFile, type Company, type Department, type Position } from '../api';
 import { ErrorAlert, Modal, downloadCsv, parseCsv } from '../components/ui';
 import { useData } from '../hooks';
 
@@ -42,9 +42,26 @@ function PositionModal({ initial, id, onClose, onSaved }: { initial: Form; id?: 
           </select>
         </label>
       </div>
-      <label className="field" style={{ marginTop: 12 }}>Job description
-        <textarea rows={8} value={f.jobDescription} onChange={(e) => setF({ ...f, jobDescription: e.target.value })} />
-      </label>
+      <div className="row spread" style={{ marginTop: 12 }}>
+        <span className="field">Job description</span>
+        <label className="small">Load from file (Word, PDF or text){' '}
+          <input type="file" accept={JD_FILE_ACCEPT} onChange={async (e) => {
+            const input = e.target;
+            const file = input.files?.[0];
+            if (!file) return;
+            try {
+              const r = await extractJdFile(file);
+              setF((cur) => ({ ...cur, jobDescription: r.text }));
+              setError(null);
+            } catch (err) {
+              setError((err as Error).message);
+            } finally {
+              input.value = '';
+            }
+          }} />
+        </label>
+      </div>
+      <textarea rows={8} value={f.jobDescription} onChange={(e) => setF({ ...f, jobDescription: e.target.value })} style={{ marginTop: 4 }} />
       <div className="row" style={{ marginTop: 16, justifyContent: 'flex-end' }}>
         <button onClick={onClose}>Cancel</button>
         <button className="primary" disabled={!f.code || !f.title || !f.companyId || !f.departmentId} onClick={save}>Save</button>

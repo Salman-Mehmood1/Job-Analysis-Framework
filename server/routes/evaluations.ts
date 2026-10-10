@@ -5,11 +5,9 @@ import { inputsSchema } from '../../shared/schemas';
 import { requireRole } from '../auth';
 import type { DB } from '../db';
 import { HttpError, body, idParam, me } from '../http';
-import { isMultiRater } from '../jobs';
+import { approvedCalibration, isMultiRater } from '../jobs';
 import { type EnrichedEvaluation, getEvaluation, getHistory, listEvaluations, logHistory } from '../services';
 
-/** Evaluators work blind: they never learn whether others evaluate the same job. */
-const forViewer = (role: string, e: EnrichedEvaluation) => (role === 'evaluator' ? { ...e, raterCount: undefined } : e);
 
 /**
  * Evaluation workflow:
@@ -24,6 +22,17 @@ export function evaluationRoutes(db: DB) {
   const admin = requireRole('admin');
   const mgmt = requireRole('management');
 
+  /**
+   * Evaluators score blind: while a job is being calibrated they never learn about other
+   * evaluations or how many there are. Once management approves the calibration, they
+   * see the job's final agreed levels and score (not the other evaluations behind it).
+   */
+  const forViewer = (u: { role: string; orgId: number }, e: EnrichedEvaluation) => {
+    if (u.role !== 'evaluator') return e;
+    const calibrated = (e.raterCount ?? 1) > 1 ? approvedCalibration(db, u.orgId, e.position.id) : null;
+    return { ...e, raterCount: undefined, calibrated };
+  };
+
   const load = (orgId: number, id: number) => {
     const e = getEvaluation(db, orgId, id);
     if (!e) throw new HttpError(404, 'Evaluation not found');
@@ -32,14 +41,16 @@ export function evaluationRoutes(db: DB) {
 
   r.get('/', requireRole(), (req, res) => {
     const u = me(req);
-    res.json(listEvaluations(db, u.orgId, u.role === 'evaluator' ? u.id : undefined).map((e) => forViewer(u.role, e)));
+    res.json(listEvaluations(db, u.orgId, u.role === 'evaluator' ? u.id : undefined).map((e) => forViewer(u, e)));
   });
 
   r.get('/:id', requireRole(), (req, res) => {
     const u = me(req);
     const e = load(u.orgId, idParam(req));
     if (u.role === 'evaluator' && e.evaluator?.id !== u.id) throw new HttpError(404, 'Evaluation not found');
-    res.json({ ...forViewer(u.role, e), history: getHistory(db, e.id) });
+    const history = getHistory(db, e.id);
+    // Event details can name other evaluators or count them; evaluators get the events only.
+    res.json({ ...forViewer(u, e), history: u.role === 'evaluator' ? history.map((h) => ({ ...h, details: {} })) : history });
   });
 
   // Assign one or more positions to one or more evaluators (one evaluation per pair).
@@ -149,7 +160,7 @@ export function evaluationRoutes(db: DB) {
       "UPDATE evaluations SET inputs = ?, rationale = ?, source = ?, status = ?, updated_at = datetime('now') WHERE id = ?",
     ).run(JSON.stringify(b.inputs), b.rationale, b.source, status, e.id);
     if (e.status === 'assigned') logHistory(db, e.id, u.id, 'started');
-    res.json(forViewer(u.role, load(u.orgId, e.id)));
+    res.json(forViewer(u, load(u.orgId, e.id)));
   });
 
   r.post('/:id/submit', requireRole('evaluator'), (req, res) => {
@@ -159,7 +170,7 @@ export function evaluationRoutes(db: DB) {
       "UPDATE evaluations SET status = 'submitted', submitted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
     ).run(e.id);
     logHistory(db, e.id, u.id, 'submitted', { totalPoints: e.result?.totalPoints, grade: e.result?.grade });
-    res.json(forViewer(u.role, load(u.orgId, e.id)));
+    res.json(forViewer(u, load(u.orgId, e.id)));
   });
 
   // ------------------------------------------------------------ management

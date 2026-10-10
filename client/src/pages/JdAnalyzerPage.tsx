@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { EvaluationResult } from '../../../shared/engine';
-import { api, type Company, type Department, type Evaluation, type JdAnalysis, type Position, type SavedAnalysis } from '../api';
+import { JD_FILE_ACCEPT, api, extractJdFile, type Company, type Department, type Evaluation, type JdAnalysis, type Position, type SavedAnalysis } from '../api';
 import { EvaluationForm, ResultStrip } from '../components/EvaluationForm';
 import { ErrorAlert, Modal, fmt, fmtDate } from '../components/ui';
 import { useData, useUser } from '../hooks';
@@ -144,11 +144,33 @@ export default function JdAnalyzerPage() {
     }
   };
 
-  const loadFile = async (f: File | undefined) => {
+  const [fileNote, setFileNote] = useState<string | null>(null);
+  const [reading, setReading] = useState(false);
+  const loadFile = async (input: HTMLInputElement) => {
+    const f = input.files?.[0];
     if (!f) return;
-    if (f.size > 1_000_000) return setError('That file is too large; paste the text instead.');
-    setText(await f.text());
-    if (!title) setTitle(f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' '));
+    setError(null);
+    setFileNote(null);
+    if (f.size > 10 * 1024 * 1024) {
+      input.value = '';
+      return setError('That file is larger than 10 MB.');
+    }
+    setReading(true);
+    try {
+      const r = await extractJdFile(f);
+      setText(r.text);
+      setOutcome(null);
+      // Prefer a "Job title:" line from the document; fall back to the file name.
+      if (r.title) setTitle(r.title);
+      else if (!title) setTitle(f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' '));
+      const words = r.text.split(/\s+/).length;
+      setFileNote(`Read ${words} words from ${f.name}${r.pages ? ` (${r.pages} page${r.pages === 1 ? '' : 's'})` : ''}. Check the text below, then analyse.`);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setReading(false);
+      input.value = '';
+    }
   };
 
   const ai = status.data?.aiEnabled;
@@ -177,8 +199,10 @@ export default function JdAnalyzerPage() {
               <option value="rules">Rule-based</option>
             </select>
           </label>
-          <label className="field">Load from file (.txt, .md)<input type="file" accept=".txt,.md,text/plain" onChange={(e) => loadFile(e.target.files?.[0])} /></label>
+          <label className="field">Load from file (Word, PDF or text)<input type="file" accept={JD_FILE_ACCEPT} disabled={reading} onChange={(e) => loadFile(e.target)} /></label>
         </div>
+        {reading && <div className="alert info" style={{ marginTop: 12 }}>Reading file…</div>}
+        {fileNote && <div className="alert ok" style={{ marginTop: 12 }}>{fileNote}</div>}
         <label className="field" style={{ marginTop: 12 }}>Job description
           <textarea rows={12} value={text} onChange={(e) => setText(e.target.value)}
             placeholder="Paste the job description: purpose, key responsibilities, reporting line, team size, budget or revenue figures, qualifications and experience…" />

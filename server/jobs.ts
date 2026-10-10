@@ -142,3 +142,19 @@ export function isMultiRater(db: DB, positionId: number) {
   const { n } = db.prepare('SELECT COUNT(*) AS n FROM evaluations WHERE position_id = ?').get(positionId) as { n: number };
   return n > 1;
 }
+
+/**
+ * The approved calibrated result of a job, as shown to its evaluators.
+ * Only the agreed outcome is shared: never the other evaluations or how many there were.
+ */
+export function approvedCalibration(db: DB, orgId: number, positionId: number) {
+  const row = db
+    .prepare(
+      `SELECT final_inputs, comment, approved_at FROM calibrations
+       WHERE org_id = ? AND position_id = ? AND status = 'approved'`,
+    )
+    .get(orgId, positionId) as { final_inputs: string; comment: string; approved_at: string } | undefined;
+  const inputs = row ? parseInputs(row.final_inputs) : null;
+  if (!row || !inputs) return null;
+  return { inputs, result: evaluate(inputs, getGrades(db, orgId)), comment: row.comment, approvedAt: row.approved_at };
+}

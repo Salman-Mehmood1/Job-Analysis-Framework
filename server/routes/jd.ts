@@ -1,9 +1,10 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { z } from 'zod';
 import { evaluate } from '../../shared/engine';
 import { requireRole } from '../auth';
 import type { DB } from '../db';
 import { HttpError, body, idParam, me } from '../http';
+import { MAX_UPLOAD_BYTES, extractJobDescription } from '../extract';
 import { MODEL, aiEnabled, analyseJobDescription, type JdAnalysis } from '../jd';
 import { getGrades, logHistory } from '../services';
 
@@ -14,6 +15,18 @@ export function jdRoutes(db: DB) {
   r.get('/status', anyone, (_req, res) => {
     res.json({ aiEnabled: aiEnabled(), model: aiEnabled() ? MODEL : null });
   });
+
+  // Upload a Word, PDF or text file (raw bytes) and get its text back for review before analysis.
+  r.post(
+    '/extract',
+    anyone,
+    express.raw({ type: () => true, limit: MAX_UPLOAD_BYTES + 1024 }),
+    async (req, res) => {
+      const filename = String(req.query.filename ?? '').slice(0, 255);
+      const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      res.json({ filename, ...(await extractJobDescription(buf, filename)) });
+    },
+  );
 
   r.post('/analyze', anyone, async (req, res) => {
     const u = me(req);

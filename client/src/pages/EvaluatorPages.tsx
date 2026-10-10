@@ -63,7 +63,7 @@ export function MyResultsPage() {
       <div className="page-head">
         <div>
           <h1>My results</h1>
-          <p className="muted">Scores from the evaluations you have completed. Where management adjusted the levels, the final score is shown alongside yours.</p>
+          <p className="muted">Scores from the evaluations you have completed. The final score is shown alongside yours: management’s adjusted score or, for calibrated jobs, the approved calibrated result.</p>
         </div>
       </div>
       <ErrorAlert error={error} />
@@ -80,14 +80,18 @@ export function MyResultsPage() {
           <tbody>
             {rows.map((r) => {
               const o = r.originalResult!;
-              const adj = !!r.adjustedInputs;
+              const final = r.calibrated?.result ?? (r.adjustedInputs ? r.result : null);
+              const adj = !!final && (final.totalPoints !== o.totalPoints || final.grade !== o.grade);
               return (
                 <tr key={r.id} className="clickable" onClick={() => nav(`/evaluator/evaluations/${r.id}`)}>
                   <td>{r.position.code}</td><td>{r.position.title}</td><td><StatusBadge status={r.status} /></td>
                   <td className="num">{fmt(o.khPoints)}</td><td className="num">{fmt(o.psPoints)}</td><td className="num">{fmt(o.acPoints)}</td>
                   <td className="num"><strong>{fmt(o.totalPoints)}</strong></td><td className="num">{o.grade}</td><td>{o.profile}</td>
-                  <td className="num">{adj ? <strong>{fmt(r.result?.totalPoints)}</strong> : <span className="muted">same</span>}</td>
-                  <td className="num">{adj ? r.result?.grade : <span className="muted">same</span>}</td>
+                  <td className="num">
+                    {adj ? <strong>{fmt(final!.totalPoints)}</strong> : <span className="muted">{r.status === 'approved' ? 'same' : 'pending'}</span>}
+                    {r.calibrated && <div className="small muted">calibrated</div>}
+                  </td>
+                  <td className="num">{adj ? final!.grade : <span className="muted">{r.status === 'approved' ? 'same' : '—'}</span>}</td>
                   <td className="small">{o.checks.join('; ') || 'OK'}</td>
                 </tr>
               );

@@ -108,6 +108,11 @@ export default function EvaluatePage() {
 
       <div className="card sticky" style={{ zIndex: 5 }}>
         <ResultStrip result={result} />
+        {e.calibrated && (
+          <p className="small" style={{ marginTop: 8 }}>
+            Final calibrated result: <strong>{fmt(e.calibrated.result.totalPoints)} pts, grade {e.calibrated.result.grade}</strong> (see below).
+          </p>
+        )}
         {e.adjustedInputs && e.result && (
           <p className="small" style={{ marginTop: 8 }}>
             Management adjusted this evaluation to <strong>{fmt(e.result.totalPoints)} pts, grade {e.result.grade}</strong>
@@ -116,7 +121,26 @@ export default function EvaluatePage() {
         )}
       </div>
 
+      {e.calibrated && (
+        <div className="card" style={{ borderColor: 'var(--ok)' }}>
+          <div className="row spread">
+            <h2>Final calibrated result</h2>
+            <span className="badge b-approved">Approved {fmtDate(e.calibrated.approvedAt)}</span>
+          </div>
+          <p className="small muted">
+            This job was calibrated by management. These are the agreed levels and the job’s official score.
+            Where the agreed level differs from yours, your level is shown beside the element.
+          </p>
+          <ResultStrip result={e.calibrated.result} />
+          {e.calibrated.comment && <p style={{ marginTop: 8 }}><strong>Calibration note:</strong> {e.calibrated.comment}</p>}
+          <div style={{ marginTop: 12 }}>
+            <EvaluationForm inputs={e.calibrated.inputs} readOnly result={e.calibrated.result} compareTo={e.inputs} compareLabel="you:" />
+          </div>
+        </div>
+      )}
+
       <div className="card">
+        {e.calibrated && <h2>Your evaluation</h2>}
         <EvaluationForm inputs={inputs} onChange={setInputs} readOnly={!editable} result={result} />
       </div>
 

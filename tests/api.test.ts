@@ -225,8 +225,23 @@ describe('multi-evaluator calibration', () => {
     expect(job.basis).toBe('adjusted_consensus');
     const adjustedPoints = job.result.totalPoints;
 
+    // before approval, evaluators see nothing of the calibration
+    const ev2 = await login('evaluator2@demo.com');
+    expect((await ev2.get(`/api/evaluations/${id2}`)).body.calibrated).toBeNull();
+
     job = (await mg.post(`/api/jobs/${posId}/calibration/approve`).send({}).expect(200)).body;
     expect(job.status).toBe('approved');
+
+    // after approval, each evaluator sees the final calibrated result, still blind to the others
+    const seen = (await ev2.get(`/api/evaluations/${id2}`)).body;
+    expect(seen.calibrated.result.totalPoints).toBe(adjustedPoints);
+    expect(seen.calibrated.inputs.acImpact).toBe('P');
+    expect(seen.calibrated.comment).toBe('Owns the result');
+    expect(seen.raterCount).toBeUndefined();
+    expect(seen.history.every((h: { details: object }) => Object.keys(h.details).length === 0)).toBe(true);
+    expect(JSON.stringify(seen)).not.toMatch(/Sara Ahmed|Third Rater/);
+    const listed = (await ev2.get('/api/evaluations')).body.find((e: { id: number }) => e.id === id2);
+    expect(listed.calibrated.result.grade).toBe(job.result.grade);
     expect(job.basis).toBe('calibrated');
     expect(job.result.totalPoints).toBe(adjustedPoints);
     expect(job.evaluations.every((e: { status: string }) => e.status === 'approved')).toBe(true);
@@ -238,6 +253,7 @@ describe('multi-evaluator calibration', () => {
 
     job = (await mg.post(`/api/jobs/${posId}/calibration/reopen`).send({}).expect(200)).body;
     expect(job.status).toBe('submitted');
+    expect((await ev2.get(`/api/evaluations/${id2}`)).body.calibrated).toBeNull();
     expect(job.basis).toBe('adjusted_consensus');
     await mg.post(`/api/evaluations/${id2}/return`).send({ comment: 'Recheck impact' }).expect(200);
   });

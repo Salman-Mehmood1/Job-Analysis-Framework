@@ -41,6 +41,8 @@ export interface Evaluation {
   result: EvaluationResult | null;
   /** Number of evaluations on this job (admin/management only). */
   raterCount?: number;
+  /** Evaluator view only: the job's approved calibrated result, once management approves it. */
+  calibrated?: { inputs: EvaluationInputs; result: EvaluationResult; comment: string; approvedAt: string } | null;
   history?: { id: number; action: string; details: Record<string, unknown>; at: string; user_name: string; user_role: string }[];
 }
 
@@ -164,6 +166,23 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
   if (!res.ok) throw new ApiError(res.status, (data as { error?: string }).error ?? res.statusText);
   return data as T;
 }
+
+/** Upload a Word, PDF or text file and get its text back. */
+export async function extractJdFile(file: File): Promise<{ text: string; kind: string; pages?: number; filename: string; title: string | null }> {
+  const res = await fetch(`/api/jd/extract?filename=${encodeURIComponent(file.name)}`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    body: file,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(res.status, (data as { error?: string }).error ?? res.statusText);
+  return data;
+}
+
+/** File types the JD upload accepts. */
+export const JD_FILE_ACCEPT =
+  '.docx,.doc,.pdf,.txt,.md,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain';
 
 export const api = {
   get: <T>(url: string) => call<T>('GET', url),
