@@ -68,7 +68,20 @@ npm start            # always rebuilds the UI first, so changes show up
 
 If the browser still shows the old screens, do a hard refresh (Ctrl+Shift+R, or Cmd+Shift+R on a Mac).
 
-On first start a demo organisation is created. Sign in from the login page buttons, or with any of these (password `demo1234`): `admin@demo.com`, `management@demo.com`, `evaluator@demo.com`, `evaluator2@demo.com`, `kamran@demo.com` (line manager), `hina@demo.com` (job holder). Demo accounts added in later versions are added to an existing demo database automatically on start.
+On first start a demo organisation is created with a worked example of every scenario. Sign in from the login page buttons, or with any of these (password `demo1234`):
+
+| Account | Who | What to look at |
+|---|---|---|
+| `admin@demo.com` | Administrator | All 33 evaluations, assignments, positions in three companies, questionnaire invitations |
+| `management@demo.com` | Management | Review queue (incl. one adjustment awaiting approval), calibration of FIN-15 (ready), HR-09 (draft), SAL-10 (one rater still due), OPS-20 (approved); four grade structures |
+| `evaluator@demo.com` | Sara (evaluator) | Approved, submitted and not-started work; the completed Senior Software Developer questionnaire |
+| `evaluator2@demo.com` | Bilal (evaluator) | An evaluation sent back for rework (OPS-08); the Head of IT questionnaire in progress |
+| `evaluator3@demo.com` | Zainab (evaluator) | The calibrated Plant Manager result; an overdue job; a saved JD analysis |
+| `kamran@demo.com` / `hina@demo.com` | Line manager / job holder, Head of IT | Submitted / not yet started |
+| `farah@demo.com` / `usman@demo.com` | Line manager / job holder, Senior Software Developer | Both submitted |
+| `tariq@demo.com` | Line manager, Quality Manager | Draft saved, not submitted (no job holder: they are optional) |
+
+A database created by an older version keeps its data; the app says on start when a newer demo is available.
 
 **Starting the demo again from scratch:** stop the app, run `npm run reset-demo`, then `npm start`. This **deletes all data** in `data/job-evaluation.db`.
 

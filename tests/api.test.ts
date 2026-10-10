@@ -31,7 +31,7 @@ describe('roles and visibility', () => {
     const ev = await login('evaluator@demo.com');
     const all = (await admin.get('/api/evaluations').expect(200)).body;
     const mine = (await ev.get('/api/evaluations').expect(200)).body;
-    expect(all.length).toBe(20);
+    expect(all.length).toBe(33);
     expect(mine.length).toBeGreaterThan(0);
     expect(mine.length).toBeLessThan(all.length);
     expect(mine.every((e: { evaluator: { name: string } }) => e.evaluator.name === 'Sara Ahmed')).toBe(true);
@@ -48,6 +48,39 @@ describe('roles and visibility', () => {
     await other.post('/api/auth/register').send({ organization: 'Other Co', name: 'Owner', email: 'o@x.com', password: 'password1' }).expect(201);
     expect((await other.get('/api/evaluations').expect(200)).body).toEqual([]);
     await other.get('/api/evaluations/1').expect(404);
+  });
+});
+
+describe('demo organisation', () => {
+  it('has a worked example of every scenario', async () => {
+    const mg = await login('management@demo.com');
+    const evals = (await mg.get('/api/evaluations')).body as { status: string; method: string; source: string; adjustedInputs: unknown }[];
+    expect(new Set(evals.map((e) => e.status))).toEqual(new Set(['assigned', 'in_progress', 'submitted', 'returned', 'approved']));
+    expect(evals.some((e) => e.status === 'submitted' && e.adjustedInputs)).toBe(true); // adjusted, awaiting approval
+    expect(evals.some((e) => e.status === 'approved' && e.adjustedInputs)).toBe(true);
+    expect(evals.some((e) => e.method === 'questionnaire' && e.status === 'submitted')).toBe(true);
+    expect(evals.some((e) => e.source === 'jd_analysis')).toBe(true);
+
+    const jobs = (await mg.get('/api/jobs')).body as { position: { code: string }; mode: string; basis: string; completeCount: number; evaluationCount: number }[];
+    const job = (code: string) => jobs.find((j) => j.position.code === code)!;
+    expect(job('FIN-15')).toMatchObject({ mode: 'multi', basis: 'consensus' });
+    expect(job('HR-09')).toMatchObject({ mode: 'multi', basis: 'adjusted_consensus' });
+    expect(job('OPS-20')).toMatchObject({ mode: 'multi', basis: 'calibrated' });
+    expect(job('SAL-10')).toMatchObject({ mode: 'multi', completeCount: 2, evaluationCount: 3 });
+
+    const { structures } = (await mg.get('/api/grade-structures')).body as { structures: { name: string }[] };
+    expect(structures.map((x) => x.name).sort()).toEqual(['Acme Services', 'Blue collar', 'Managers & leaders', 'Standard']);
+    expect((await mg.get('/api/jd/analyses')).body.length).toBeGreaterThanOrEqual(4);
+
+    // evaluators see the calibrated result of an approved multi-rater job
+    const zainab = await login('evaluator3@demo.com');
+    const plant = (await zainab.get('/api/evaluations')).body.find((e: { position: { code: string } }) => e.position.code === 'OPS-20');
+    expect(plant.calibrated.inputs.psChallenge).toBe('4');
+
+    // every respondent account has a questionnaire to look at
+    for (const email of ['kamran@demo.com', 'hina@demo.com', 'farah@demo.com', 'usman@demo.com', 'tariq@demo.com']) {
+      expect((await (await login(email)).get('/api/questionnaire-responses/mine')).body.length).toBeGreaterThan(0);
+    }
   });
 });
 

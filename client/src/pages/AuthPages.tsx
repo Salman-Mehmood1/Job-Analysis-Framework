@@ -9,9 +9,14 @@ type Session = { user: User; organization: Organization };
 const DEMO = [
   ['Administrator', 'admin@demo.com'],
   ['Management', 'management@demo.com'],
-  ['Evaluator', 'evaluator@demo.com'],
-  ['Line manager', 'kamran@demo.com'],
-  ['Job holder', 'hina@demo.com'],
+  ['Evaluator · Sara', 'evaluator@demo.com'],
+  ['Evaluator · Bilal', 'evaluator2@demo.com'],
+  ['Evaluator · Zainab', 'evaluator3@demo.com'],
+  ['Line manager · Kamran', 'kamran@demo.com'],
+  ['Job holder · Hina', 'hina@demo.com'],
+  ['Line manager · Farah', 'farah@demo.com'],
+  ['Job holder · Usman', 'usman@demo.com'],
+  ['Line manager · Tariq', 'tariq@demo.com'],
 ] as const;
 
 export function LoginPage() {
