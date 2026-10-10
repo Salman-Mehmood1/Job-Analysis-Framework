@@ -73,6 +73,17 @@ export default function EvaluatePage() {
     }
   };
 
+  // "Save & next" in the questionnaire: keep the draft without a notice.
+  const saveQuietly = async () => {
+    if (!e || !dirty) return;
+    try {
+      await api.put(`/evaluations/${e.id}/questionnaire`, { questionnaire: qDraft, rationale });
+      ev.reload();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
   const analyse = async () => {
     if (!e) return;
     setBusy(true);
@@ -193,9 +204,8 @@ export default function EvaluatePage() {
       {isQ ? (
         <>
           <RespondentsCard respondents={respondents} />
-          <div className="card">
-            <EvaluatorQuestionnaire value={qDraft} onChange={setQDraft} respondents={respondents} readOnly={!editable} />
-          </div>
+          <EvaluatorQuestionnaire value={qDraft} onChange={setQDraft} respondents={respondents} readOnly={!editable}
+            onSave={saveQuietly} onSubmit={() => save(true)} canSubmit={canSubmit} busy={busy} scrollMargin={150} />
           <details className="card">
             <summary><strong>Resulting levels</strong> <span className="small muted">(carried to the scoring calculator)</span></summary>
             <div style={{ marginTop: 12 }}><EvaluationForm inputs={qResult.inputs} readOnly result={result} /></div>

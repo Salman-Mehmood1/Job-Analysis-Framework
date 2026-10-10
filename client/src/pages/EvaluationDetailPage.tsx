@@ -167,9 +167,9 @@ export default function EvaluationDetailPage() {
           )}
 
           {e.questionnaire && (e.method === 'questionnaire' || e.questionnaire.respondents.length > 0) && (
-            <div className="card">
-              <div className="row spread">
-                <h2>Questionnaire pack</h2>
+            <div>
+              <div className="row spread" style={{ marginBottom: 8 }}>
+                <h2 style={{ margin: 0 }}>Questionnaire pack</h2>
                 {e.method !== 'questionnaire' && <span className="badge b-neutral">Not used: levels entered directly</span>}
               </div>
               <EvaluatorQuestionnaire value={e.questionnaire.ev} respondents={e.questionnaire.respondents} readOnly />

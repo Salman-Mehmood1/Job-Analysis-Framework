@@ -12,6 +12,7 @@ import {
 import { LEVEL_DEFINITIONS } from '../../../shared/engine';
 import { RESPONDENT_ROLE_LABEL, type Respondent } from '../api';
 import { QuestionBlock } from './QuestionBlock';
+import { QuestionnaireShell, type ShellSection } from './QuestionnaireShell';
 import { fmt, fmtDate } from './ui';
 
 const STATUS_TEXT = { invited: 'Not started', in_progress: 'In progress', submitted: 'Submitted' } as const;
@@ -73,11 +74,23 @@ export function EvaluatorQuestionnaire({
   onChange,
   respondents,
   readOnly,
+  onSave,
+  onSubmit,
+  canSubmit,
+  busy,
+  scrollMargin,
 }: {
   value: EvQ;
   onChange?: (next: EvQ) => void;
   respondents: Respondent[];
   readOnly?: boolean;
+  /** Saves the draft quietly; called when moving to another section. */
+  onSave?: () => Promise<void>;
+  /** Saves and submits the evaluation (last section). */
+  onSubmit?: () => void;
+  canSubmit?: boolean;
+  busy?: boolean;
+  scrollMargin?: number;
 }) {
   const [section, setSection] = useState<Section>(readOnly ? 'summary' : 'KH_T');
   const result = useConsolidated(value, respondents);
@@ -85,24 +98,24 @@ export function EvaluatorQuestionnaire({
   const el = QUESTIONNAIRE.find((x) => x.id === section);
   const complexStories = respondents.filter((r) => r.status === 'submitted' && r.complexProblem);
 
-  const sections: { key: Section; label: string; flag?: boolean; done: boolean }[] = [
+  const sections: ShellSection<Section>[] = [
     ...QUESTIONNAIRE.map((x) => {
       const r = result.elements[x.id];
       return { key: x.id as Section, label: x.code, done: r.complete && !r.overrideError, flag: r.spreadFlag || r.divergentQuestions.length > 0 };
     }),
     { key: 'AC_M', label: 'AC-M Magnitude', done: !!value.magnitude.level },
-    { key: 'summary', label: 'Summary', done: result.complete },
+    { key: 'summary', label: readOnly ? 'Summary' : 'Review & submit', done: result.complete },
   ];
+  const total = QUESTIONNAIRE.reduce((n, x) => n + x.questions.length, 0);
+  const answered = QUESTIONNAIRE.reduce((n, x) => n + x.questions.filter((qu) => value.answers[qu.id]).length, 0);
+  const go = async (key: Section) => {
+    if (!readOnly && onSave) await onSave();
+    setSection(key);
+  };
 
   return (
-    <div>
-      <div className="section-nav" role="tablist">
-        {sections.map((s) => (
-          <button key={s.key} role="tab" aria-selected={section === s.key} className={`choice${section === s.key ? ' on' : ''}`} onClick={() => setSection(s.key)}>
-            {s.done ? '✓ ' : ''}{s.label}{s.flag ? ' ⚑' : ''}
-          </button>
-        ))}
-      </div>
+    <QuestionnaireShell sections={sections} current={section} onGo={go} answered={answered} total={total}
+      progressLabel={readOnly ? 'questions rated by the evaluator' : 'questions rated'} readOnly={readOnly} scrollMargin={scrollMargin}>
 
       {el && (() => {
         const r = result.elements[el.id];
@@ -215,8 +228,20 @@ export function EvaluatorQuestionnaire({
 
       {section === 'AC_M' && <MagnitudeEditor value={value.magnitude} readOnly={readOnly} onChange={(magnitude) => set({ magnitude })} />}
 
-      {section === 'summary' && <QuestionnaireSummary result={result} magnitude={value.magnitude} />}
-    </div>
+      {section === 'summary' && (
+        <div>
+          <QuestionnaireSummary result={result} magnitude={value.magnitude} />
+          {!readOnly && onSubmit && (
+            <div className="row" style={{ marginTop: 12 }}>
+              <button className="primary" disabled={busy || !canSubmit} onClick={onSubmit}>Submit for review</button>
+              <span className="small muted">
+                {canSubmit ? 'After submitting, the evaluation goes to management and can no longer be changed.' : 'Rate every question, set the magnitude and justify any override to submit.'}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+    </QuestionnaireShell>
   );
 }
 

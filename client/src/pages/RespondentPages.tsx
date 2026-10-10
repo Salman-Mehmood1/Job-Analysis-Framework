@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { JOB_INFO_FIELDS, type JobInfo, QUESTIONNAIRE, RESPONDENT_QUESTIONS } from '../../../shared/questionnaire';
 import { type MyQuestionnaire, RESPONDENT_ROLE_LABEL, api } from '../api';
 import { QuestionBlock } from '../components/QuestionBlock';
+import { QuestionnaireShell, type ShellSection } from '../components/QuestionnaireShell';
 import { ErrorAlert, fmtDate } from '../components/ui';
 import { useData } from '../hooks';
 
@@ -92,7 +93,6 @@ export function RespondQuestionnairePage() {
     if (dirty) await save(true);
     setNotice(null);
     setSection(s);
-    window.scrollTo({ top: 0 });
   };
   const submit = async () => {
     if (!d) return;
@@ -116,14 +116,13 @@ export function RespondQuestionnairePage() {
   if (q.error) return <ErrorAlert error={q.error} />;
   if (!d) return <div className="muted">Loading…</div>;
 
-  const sections: { key: Section; label: string; done?: boolean }[] = [
-    { key: 'info', label: '1 · Job information', done: Object.values(jobInfo).some((v) => v?.trim()) },
+  const sections: ShellSection<Section>[] = [
+    { key: 'info', label: 'Job information', done: Object.values(jobInfo).some((v) => v?.trim()) },
     ...QUESTIONNAIRE.map((el) => ({ key: el.id as Section, label: el.code, done: answeredIn(el.id) === el.questions.filter((x) => !x.evaluatorOnly).length })),
     { key: 'complex', label: 'Most complex problem', done: !!complexProblem.trim() },
     { key: 'review', label: 'Review & submit' },
   ];
   const el = QUESTIONNAIRE.find((x) => x.id === section);
-  const idx = sections.findIndex((s) => s.key === section);
 
   return (
     <div>
@@ -159,19 +158,7 @@ export function RespondQuestionnairePage() {
         </div>
       )}
 
-      <div className="row" style={{ marginBottom: 8 }}>
-        <div className="progress" style={{ flex: 1 }}><div style={{ width: `${(answered / TOTAL) * 100}%` }} /></div>
-        <span className="small muted">{answered} of {TOTAL} questions answered</span>
-      </div>
-      <div className="section-nav" role="tablist">
-        {sections.map((s) => (
-          <button key={s.key} role="tab" aria-selected={section === s.key} className={`choice${section === s.key ? ' on' : ''}`} onClick={() => go(s.key)}>
-            {s.done && section !== s.key ? '✓ ' : ''}{s.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="card">
+      <QuestionnaireShell sections={sections} current={section} onGo={go} answered={answered} total={TOTAL} readOnly={readOnly}>
         {section === 'info' && (
           <div className="stack">
             <h2>Part 2 · Job information</h2>
@@ -248,7 +235,7 @@ export function RespondQuestionnairePage() {
 
         {section === 'review' && (
           <div>
-            <h2>Review</h2>
+            <h2>Review &amp; submit</h2>
             <table>
               <thead><tr><th>Section</th><th className="num">Answered</th></tr></thead>
               <tbody>
@@ -267,12 +254,7 @@ export function RespondQuestionnairePage() {
             )}
           </div>
         )}
-
-        <div className="row spread" style={{ marginTop: 16 }}>
-          <button disabled={idx <= 0} onClick={() => go(sections[idx - 1].key)}>← Previous</button>
-          {idx < sections.length - 1 && <button className="primary" onClick={() => go(sections[idx + 1].key)}>{readOnly ? 'Next' : 'Save & next'} →</button>}
-        </div>
-      </div>
+      </QuestionnaireShell>
     </div>
   );
 }
