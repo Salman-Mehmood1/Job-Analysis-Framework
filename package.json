@@ -1,0 +1,46 @@
+{
+  "name": "job-evaluation-app",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Multi-panel job evaluation app (Hay point-factor method) with admin, evaluator and management panels.",
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"tsx watch server/index.ts\" \"vite\"",
+    "build": "vite build",
+    "start": "NODE_ENV=production tsx server/index.ts",
+    "seed": "tsx server/seed.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.133.0",
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^13.0.3",
+    "cookie-parser": "^1.4.7",
+    "express": "^5.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "tsx": "^4.23.15",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/supertest": "^7.2.1",
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^10.0.6",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-router-dom": "^7.18.4",
+    "recharts": "^3.10.1",
+    "supertest": "^7.3.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.3"
+  }
+}

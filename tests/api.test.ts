@@ -1,0 +1,148 @@
+import request from 'supertest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { createApp } from '../server/app';
+import { openDb } from '../server/db';
+import { analyseWithRules } from '../server/jd';
+import { seedDemo } from '../server/seed';
+
+process.env.JD_ANALYZER = 'rules';
+
+let app: ReturnType<typeof createApp>;
+beforeEach(() => {
+  const db = openDb(':memory:');
+  seedDemo(db);
+  app = createApp(db);
+});
+
+async function login(email: string) {
+  const agent = request.agent(app);
+  await agent.post('/api/auth/login').send({ email, password: 'demo1234' }).expect(200);
+  return agent;
+}
+
+describe('roles and visibility', () => {
+  it('rejects anonymous access', async () => {
+    await request(app).get('/api/evaluations').expect(401);
+  });
+
+  it('evaluators only see their own evaluations; admin sees all', async () => {
+    const admin = await login('admin@demo.com');
+    const ev = await login('evaluator@demo.com');
+    const all = (await admin.get('/api/evaluations').expect(200)).body;
+    const mine = (await ev.get('/api/evaluations').expect(200)).body;
+    expect(all.length).toBe(18);
+    expect(mine.length).toBeGreaterThan(0);
+    expect(mine.length).toBeLessThan(all.length);
+    expect(mine.every((e: { evaluator: { name: string } }) => e.evaluator.name === 'Sara Ahmed')).toBe(true);
+  });
+
+  it('evaluators cannot assign or edit grades', async () => {
+    const ev = await login('evaluator@demo.com');
+    await ev.post('/api/evaluations').send({ positionIds: [1], evaluatorId: 3 }).expect(403);
+    await ev.put('/api/grades').send([]).expect(403);
+  });
+
+  it('organisations are isolated', async () => {
+    const other = request.agent(app);
+    await other.post('/api/auth/register').send({ organization: 'Other Co', name: 'Owner', email: 'o@x.com', password: 'password1' }).expect(201);
+    expect((await other.get('/api/evaluations').expect(200)).body).toEqual([]);
+    await other.get('/api/evaluations/1').expect(404);
+  });
+});
+
+describe('evaluation workflow', () => {
+  it('assign → fill → submit → adjust → approve, with history', async () => {
+    const admin = await login('admin@demo.com');
+    const ev = await login('evaluator@demo.com');
+    const mg = await login('management@demo.com');
+
+    const pos = (await admin.get('/api/positions')).body.find((p: { code: string }) => p.code === 'IT-12');
+    const { ids } = (await admin.post('/api/evaluations').send({ positionIds: [pos.id], evaluatorId: 3 }).expect(201)).body;
+    const id = ids[0];
+
+    await ev.post(`/api/evaluations/${id}/submit`).expect(400); // incomplete
+    const inputs = { khTechnical: 'F', khBreadth: 'II', khHumanRelations: '2', khShade: '', psEnvironment: 'E', psChallenge: '4', psPick: 'Low', acFreedom: 'E', acMagnitude: '3', acImpact: 'C', acShade: '' };
+    const saved = (await ev.put(`/api/evaluations/${id}/inputs`).send({ inputs }).expect(200)).body;
+    expect(saved.status).toBe('in_progress');
+    expect(saved.result.totalPoints).toBe(1194);
+
+    await mg.put(`/api/evaluations/${id}/adjust`).send({ inputs }).expect(409); // not yet submitted
+    await ev.post(`/api/evaluations/${id}/submit`).expect(200);
+    await ev.put(`/api/evaluations/${id}/inputs`).send({ inputs }).expect(409); // locked
+
+    const adjusted = (await mg.put(`/api/evaluations/${id}/adjust`).send({ inputs: { ...inputs, acImpact: 'P' }, comment: 'Owns the IT budget' }).expect(200)).body;
+    expect(adjusted.originalResult.totalPoints).toBe(1194);
+    expect(adjusted.result.totalPoints).toBeGreaterThan(1194);
+
+    const approved = (await mg.post(`/api/evaluations/${id}/approve`).send({}).expect(200)).body;
+    expect(approved.status).toBe('approved');
+    const detail = (await admin.get(`/api/evaluations/${id}`)).body;
+    expect(detail.history.map((h: { action: string }) => h.action)).toEqual(['assigned', 'started', 'submitted', 'adjusted', 'approved']);
+  });
+
+  it('management can return an evaluation for rework', async () => {
+    const mg = await login('management@demo.com');
+    const list = (await mg.get('/api/evaluations')).body;
+    const sub = list.find((e: { status: string }) => e.status === 'submitted');
+    await mg.post(`/api/evaluations/${sub.id}/return`).send({ comment: '' }).expect(400);
+    const r = (await mg.post(`/api/evaluations/${sub.id}/return`).send({ comment: 'Check magnitude' }).expect(200)).body;
+    expect(r.status).toBe('returned');
+  });
+});
+
+describe('grade structure', () => {
+  it('changing grades re-grades evaluations immediately', async () => {
+    const mg = await login('management@demo.com');
+    const before = (await mg.get('/api/evaluations')).body.find((e: { position: { code: string } }) => e.position.code === 'FIN-10');
+    expect(before.result.grade).toBe(15);
+    const grades = [
+      { grade: 1, minPoints: 0, careerLevel: 'Junior', typicalRoles: '' },
+      { grade: 2, minPoints: 500, careerLevel: 'Middle', typicalRoles: '' },
+      { grade: 3, minPoints: 1000, careerLevel: 'Senior', typicalRoles: '' },
+    ];
+    await mg.put('/api/grades').send(grades).expect(200);
+    const after = (await mg.get('/api/evaluations')).body.find((e: { position: { code: string } }) => e.position.code === 'FIN-10');
+    expect(after.result.grade).toBe(3);
+    expect(after.result.careerLevel).toBe('Senior');
+  });
+
+  it('rejects non-ascending bands', async () => {
+    const admin = await login('admin@demo.com');
+    await admin
+      .put('/api/grades')
+      .send([
+        { grade: 1, minPoints: 0, careerLevel: '', typicalRoles: '' },
+        { grade: 2, minPoints: 0, careerLevel: '', typicalRoles: '' },
+      ])
+      .expect(400);
+  });
+});
+
+describe('job description analysis', () => {
+  it('rule-based analyser gives sensible relative levels', () => {
+    const clerk = analyseWithRules('Data Entry Clerk', 'Enters invoices into the system following standard operating procedures. Work is checked under close supervision.');
+    const director = analyseWithRules('Finance Director', 'Reports to the CEO. Sets financial strategy, leads a team of 40 across accounting, treasury and tax, and is accountable for a $250 million budget. Chartered accountant with 15 years experience.');
+    const L = 'ABCDEFGH';
+    expect(L.indexOf(director.inputs.khTechnical)).toBeGreaterThan(L.indexOf(clerk.inputs.khTechnical));
+    expect(director.inputs.acMagnitude).toBe('4');
+    expect(director.inputs.acImpact).toBe('P');
+  });
+
+  it('analyse endpoint scores and stores; management can commit it as an evaluation', async () => {
+    const mg = await login('management@demo.com');
+    const res = (
+      await mg.post('/api/jd/analyze').send({ title: 'Procurement Manager', text: 'Manages a team of 6 buyers, negotiates supplier contracts and is accountable for $30M annual spend. Degree and 8 years experience.' }).expect(200)
+    ).body;
+    expect(res.analysis.method).toBe('rules');
+    expect(res.result.complete).toBe(true);
+    const depts = (await mg.get('/api/departments')).body;
+    const d = depts[0];
+    const { evaluationId } = (
+      await mg.post(`/api/jd/analyses/${res.id}/commit`).send({ newPosition: { code: 'PRC-10', title: 'Procurement Manager', companyId: d.companyId, departmentId: d.id } }).expect(201)
+    ).body;
+    const e = (await mg.get(`/api/evaluations/${evaluationId}`).expect(200)).body;
+    expect(e.status).toBe('submitted');
+    expect(e.source).toBe('jd_analysis');
+    expect(e.result.totalPoints).toBe(res.result.totalPoints);
+  });
+});
