@@ -128,7 +128,7 @@ export default function EvaluationDetailPage() {
                 <span className="small muted">Evaluator: {fmt(e.originalResult.totalPoints)} pts · grade {e.originalResult.grade ?? '—'} → Management: {fmt(e.result?.totalPoints)} pts · grade {e.result?.grade ?? '—'}</span>
               )}
             </div>
-            <ResultStrip result={reviewable ? draftResult : e.result} />
+            <ResultStrip result={reviewable ? draftResult : e.result} payTable={structures.payFor(e.gradeStructure.id)} />
           </div>
 
           {reviewable ? (

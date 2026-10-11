@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { DEFAULT_GRADES, evaluate, generateGrades, gradeFor } from '../../../shared/engine';
 import { api, type Company, type GradeBand, type GradeStructure, type JobRecord, type Position } from '../api';
+import { PayEditor, PayStarter, type StarterOptions, buildStarterModel, defaultStarter } from '../components/PaySetup';
 import { ErrorAlert, Modal, fmt } from '../components/ui';
+import { computePay, coverageProblems } from '../../../shared/pay';
 import { useData, useStructures } from '../hooks';
 
 type Row = GradeBand & { key: number };
@@ -36,7 +38,9 @@ export default function GradesPage() {
         {list.map((s) => (
           <button key={s.id} role="tab" aria-selected={s.id === current?.id} className={`choice${s.id === current?.id ? ' on' : ''}`} onClick={() => setSelected(s.id)}>
             {s.name}
-            <span className="small" style={{ opacity: 0.8 }}>· {s.bands.length} grades · {s.positionCount} positions{s.isDefault ? ' · default' : ''}</span>
+            <span className="small" style={{ opacity: 0.8 }}>
+              · {s.bands.length} grades{s.pay ? ` · ${s.pay.bands.length} pay bands` : ''} · {s.positionCount} positions{s.isDefault ? ' · default' : ''}
+            </span>
           </button>
         ))}
       </div>
@@ -73,13 +77,20 @@ function NewStructureModal({ structures, onClose, onCreated }: { structures: Gra
   const [copyFrom, setCopyFrom] = useState(structures[0]?.id ?? 0);
   const [gen, setGen] = useState({ count: 10, lowest: 100, highest: 1500 });
   const [error, setError] = useState<string | null>(null);
+  const grades =
+    start === 'copy' ? structures.find((s) => s.id === copyFrom)?.bands ?? [] : start === 'standard' ? DEFAULT_GRADES : generateGrades(gen.count, gen.lowest, gen.highest);
+  const [payOpts, setPayOpts] = useState<StarterOptions>(() => ({ ...defaultStarter(DEFAULT_GRADES, structures), mode: 'none' }));
+  // Keep the suggested number of bands in step with the number of grades.
+  useEffect(() => setPayOpts((o) => ({ ...o, bandCount: grades.length === 23 ? 11 : Math.max(1, Math.round(grades.length / 2)) })), [grades.length]);
+  const pay = buildStarterModel(grades, payOpts, structures);
+  const payProblems = pay ? computePay(pay, grades).problems : [];
 
   const submit = async () => {
     try {
       const payload =
         start === 'copy'
-          ? { name, description, copyFrom }
-          : { name, description, bands: start === 'standard' ? DEFAULT_GRADES : generateGrades(gen.count, gen.lowest, gen.highest) };
+          ? { name, description, copyFrom, pay }
+          : { name, description, bands: grades, pay };
       const r = await api.post<{ id: number }>('/grade-structures', payload);
       onCreated(r.id);
     } catch (e) {
@@ -88,7 +99,7 @@ function NewStructureModal({ structures, onClose, onCreated }: { structures: Gra
   };
 
   return (
-    <Modal title="New grade structure" onClose={onClose}>
+    <Modal title="New grade structure" onClose={onClose} wide>
       <ErrorAlert error={error} />
       <div className="form-grid">
         <label className="field">Name<input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Blue collar" /></label>
@@ -114,17 +125,19 @@ function NewStructureModal({ structures, onClose, onCreated }: { structures: Gra
           <label className="field">Top grade starts at<input type="number" min={2} value={gen.highest} onChange={(e) => setGen({ ...gen, highest: Number(e.target.value) })} /></label>
         </div>
       )}
-      <p className="small muted" style={{ marginTop: 8 }}>You can edit every grade afterwards. A new structure grades no jobs until you assign positions or companies to it.</p>
+      <p className="small muted" style={{ marginTop: 8 }}>{grades.length} job grades. You can edit every grade afterwards. A new structure grades no jobs until you assign positions or companies to it.</p>
+      <h3 style={{ marginTop: 16 }}>Salary bands</h3>
+      <PayStarter grades={grades} structures={structures} value={payOpts} onChange={setPayOpts} />
       <div className="row" style={{ justifyContent: 'flex-end', marginTop: 12 }}>
         <button onClick={onClose}>Cancel</button>
-        <button className="primary" disabled={!name.trim()} onClick={submit}>Create</button>
+        <button className="primary" disabled={!name.trim() || payProblems.length > 0} onClick={submit}>Create</button>
       </div>
     </Modal>
   );
 }
 
 function StructureEditor({ structure, all, reload, onDeleted }: { structure: GradeStructure; all: GradeStructure[]; reload: () => void; onDeleted: () => void }) {
-  const [tab, setTab] = useState<'grades' | 'applies'>('grades');
+  const [tab, setTab] = useState<'grades' | 'pay' | 'applies'>('grades');
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -178,13 +191,14 @@ function StructureEditor({ structure, all, reload, onDeleted }: { structure: Gra
 
       <div className="tabs" role="tablist" style={{ marginTop: 12 }}>
         <button role="tab" aria-selected={tab === 'grades'} className={tab === 'grades' ? 'on' : ''} onClick={() => setTab('grades')}>Grades</button>
+        <button role="tab" aria-selected={tab === 'pay'} className={tab === 'pay' ? 'on' : ''} onClick={() => setTab('pay')}>Salary bands &amp; pay</button>
         <button role="tab" aria-selected={tab === 'applies'} className={tab === 'applies' ? 'on' : ''} onClick={() => setTab('applies')}>Applies to</button>
       </div>
-      {tab === 'grades' ? (
+      {tab === 'grades' && (
         <BandsEditor structure={structure} onSaved={() => { reload(); setNotice('Grades saved. Every job on this structure has been re-graded.'); }} />
-      ) : (
-        <AppliesTo structure={structure} all={all} reload={reload} />
       )}
+      {tab === 'pay' && <PayEditor structure={structure} structures={all} onSaved={(msg) => { reload(); setNotice(msg); }} />}
+      {tab === 'applies' && <AppliesTo structure={structure} all={all} reload={reload} />}
     </div>
   );
 }
@@ -207,6 +221,7 @@ function BandsEditor({ structure, onSaved }: { structure: GradeStructure; onSave
     return p;
   });
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
+  const payWarnings = structure.pay && dirty && !problems.length ? coverageProblems(structure.pay, draft) : [];
 
   // Impact of the draft on the scored jobs that use this structure.
   const impact = useMemo(() => {
@@ -250,6 +265,11 @@ function BandsEditor({ structure, onSaved }: { structure: GradeStructure; onSave
     <div>
       <ErrorAlert error={error} />
       {problems.length > 0 && <div className="alert error">{problems.map((p) => <div key={p}>{p}</div>)}</div>}
+      {payWarnings.length > 0 && (
+        <div className="alert info">
+          These grades no longer fit the salary bands ({payWarnings.join('; ')}). After saving, regroup the bands on the “Salary bands &amp; pay” tab.
+        </div>
+      )}
       <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 12 }}>
         {dirty && <button onClick={() => setRows(withKeys(saved))}>Discard changes</button>}
         <button className="primary" disabled={busy || !dirty || problems.length > 0} onClick={save}>Save grades</button>
@@ -258,7 +278,7 @@ function BandsEditor({ structure, onSaved }: { structure: GradeStructure; onSave
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th>Grade</th><th>Min points</th><th>Max points</th><th>Career level</th><th>Typical roles</th><th /></tr>
+              <tr><th>Grade</th><th>Min points</th><th>Max points</th><th className="num" title="How much higher the next grade starts">Width</th>{structure.payTable && <th>Pay band</th>}<th>Career level</th><th>Typical roles</th><th /></tr>
             </thead>
             <tbody>
               {rows.map((r, i) => (
@@ -270,6 +290,8 @@ function BandsEditor({ structure, onSaved }: { structure: GradeStructure; onSave
                       onChange={(e) => update(r.key, { minPoints: Number(e.target.value) })} />
                   </td>
                   <td className="num muted">{i < rows.length - 1 ? fmt(rows[i + 1].minPoints - 1) : 'and above'}</td>
+                  <td className="num muted small">{i > 0 && i < rows.length - 1 && r.minPoints > 0 ? `${Math.round((rows[i + 1].minPoints / r.minPoints - 1) * 100)}%` : ''}</td>
+                  {structure.payTable && <td className="small">{structure.payTable.zones.find((z) => z.grade === r.grade)?.band ?? '—'}</td>}
                   <td><input value={r.careerLevel} onChange={(e) => update(r.key, { careerLevel: e.target.value })} /></td>
                   <td><input value={r.typicalRoles} onChange={(e) => update(r.key, { typicalRoles: e.target.value })} /></td>
                   <td>

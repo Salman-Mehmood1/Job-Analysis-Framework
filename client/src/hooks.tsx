@@ -84,5 +84,7 @@ export function useStructures() {
   const structures = q.data?.structures ?? [];
   const bandsFor = (id: number | undefined | null): GradeBand[] | null =>
     q.data ? (structures.find((s) => s.id === id) ?? structures.find((s) => s.isDefault))?.bands ?? null : null;
-  return { ...q, structures, bandsFor };
+  /** Salary bands of a structure (admin and management only). */
+  const payFor = (id: number | undefined | null) => structures.find((s) => s.id === id)?.payTable ?? null;
+  return { ...q, structures, bandsFor, payFor };
 }

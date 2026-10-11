@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { DEFAULT_GRADES } from '../../shared/engine';
-import { gradeStructureSchema } from '../../shared/schemas';
+import { gradeStructureSchema, payModelSchema } from '../../shared/schemas';
 import { STAFF, requireRole } from '../auth';
 import { type DB, createStructure, replaceBands } from '../db';
 import { HttpError, body, idParam, me } from '../http';
@@ -42,11 +42,16 @@ export function gradeRoutes(db: DB) {
   };
 
   r.get('/', requireRole(...STAFF), (req, res) => {
-    const orgId = me(req).orgId;
+    const u = me(req);
+    const orgId = u.orgId;
     const { ctx, counts } = usage(orgId);
+    // Pay ranges are for administrators and management only.
+    const seesPay = u.role !== 'evaluator';
     res.json({
       structures: [...ctx.byId.values()].map((s) => ({
         ...s,
+        pay: seesPay ? s.pay : null,
+        payTable: seesPay ? s.payTable : null,
         companyIds: [...ctx.companyDefaults.entries()].filter(([, sid]) => sid === s.id).map(([cid]) => cid),
         positionCount: counts.get(s.id)?.positions ?? 0,
         explicitCount: counts.get(s.id)?.explicit ?? 0,
@@ -57,7 +62,8 @@ export function gradeRoutes(db: DB) {
 
   const nameSchema = z.string().trim().min(1).max(80);
 
-  // Create from the 23 standard grades, a copy of another structure, or given bands.
+  // Create from the 23 standard grades, a copy of another structure, or given bands;
+  // optionally with salary bands (pay), or copying another structure's pay setup.
   r.post('/', editors, (req, res) => {
     const orgId = me(req).orgId;
     const b = body(
@@ -67,17 +73,26 @@ export function gradeRoutes(db: DB) {
         description: z.string().max(500).default(''),
         copyFrom: z.number().int().optional(),
         bands: gradeStructureSchema.optional(),
+        pay: payModelSchema.nullable().optional(),
+        copyPayFrom: z.number().int().optional(),
       }),
     );
+    const ctx = loadStructures(db, orgId);
     let bands = b.bands ?? DEFAULT_GRADES;
+    let pay = b.pay ?? null;
     if (b.copyFrom) {
       owned(orgId, b.copyFrom);
-      bands = loadStructures(db, orgId).byId.get(b.copyFrom)!.bands;
+      bands = ctx.byId.get(b.copyFrom)!.bands;
+      if (b.pay === undefined) pay = ctx.byId.get(b.copyFrom)!.pay;
+    }
+    if (b.copyPayFrom) {
+      owned(orgId, b.copyPayFrom);
+      pay = ctx.byId.get(b.copyPayFrom)!.pay;
     }
     if (db.prepare('SELECT 1 FROM grade_structures WHERE org_id = ? AND name = ?').get(orgId, b.name)) {
       throw new HttpError(409, 'A grade structure with this name already exists');
     }
-    const id = db.transaction(() => createStructure(db, orgId, b.name, b.description, bands))();
+    const id = db.transaction(() => createStructure(db, orgId, b.name, b.description, bands, false, pay))();
     res.status(201).json({ id });
   });
 
@@ -106,6 +121,15 @@ export function gradeRoutes(db: DB) {
     const bands = body(req, gradeStructureSchema);
     db.transaction(() => replaceBands(db, s.id, bands))();
     res.json({ ok: true });
+  });
+
+  // Salary bands, cadres and pay inputs (null removes them: points-only structure).
+  r.put('/:id/pay', editors, (req, res) => {
+    const s = owned(me(req).orgId, idParam(req));
+    const { pay } = body(req, z.object({ pay: payModelSchema.nullable() }));
+    db.prepare('UPDATE grade_structures SET pay = ? WHERE id = ?').run(pay ? JSON.stringify(pay) : null, s.id);
+    const saved = loadStructures(db, me(req).orgId).byId.get(s.id)!;
+    res.json({ pay: saved.pay, payTable: saved.payTable });
   });
 
   // Positions and companies that used it fall back to their company default or the organisation default.

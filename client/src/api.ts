@@ -1,4 +1,5 @@
 import type { EvaluationInputs, EvaluationResult, GradeBand } from '../../shared/engine';
+import type { GradeZone, PayModel, PayTable } from '../../shared/pay';
 import type { Answers, EvaluatorQuestionnaire, JobInfo, QuestionnaireResult } from '../../shared/questionnaire';
 
 export type Role = 'admin' | 'evaluator' | 'management' | 'respondent';
@@ -45,6 +46,8 @@ export interface Evaluation {
   updatedAt: string;
   originalResult: EvaluationResult | null;
   result: EvaluationResult | null;
+  /** Salary band and pay zone of the grade (admin and management only; null without salary bands). */
+  pay?: PayZone | null;
   /** Number of evaluations on this job (admin/management only). */
   raterCount?: number;
   /** Evaluator view only: the job's approved calibrated result, once management approves it. */
@@ -77,6 +80,7 @@ export interface JobRecord {
   basis: 'evaluation' | 'consensus' | 'adjusted_consensus' | 'calibrated';
   result: EvaluationResult | null;
   effectiveInputs: EvaluationInputs | null;
+  pay: PayZone | null;
   adjusted: boolean;
   spread: { minPoints: number; maxPoints: number; minGrade: number; maxGrade: number } | null;
   calibration: {
@@ -131,7 +135,12 @@ export interface GradeStructure {
   positionCount: number;
   /** Positions assigned to it directly. */
   explicitCount: number;
+  /** Salary bands, cadres and pay inputs (admin and management only); null = points only. */
+  pay: PayModel | null;
+  payTable: PayTable | null;
 }
+
+export type PayZone = GradeZone & { currency: string };
 export interface Department {
   id: number;
   name: string;

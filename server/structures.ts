@@ -7,6 +7,7 @@
  *   3. the organisation's default structure.
  */
 import { type GradeBand, sortGrades } from '../shared/engine';
+import { type PayModel, type PayTable, computePay } from '../shared/pay';
 import type { DB } from './db';
 
 export interface Structure {
@@ -15,6 +16,10 @@ export interface Structure {
   description: string;
   isDefault: boolean;
   bands: GradeBand[];
+  /** Salary bands, cadres and pay inputs; null = points only. */
+  pay: PayModel | null;
+  /** The computed salary bands and grade zones. */
+  payTable: PayTable | null;
 }
 
 export type StructureSource = 'position' | 'company' | 'organisation';
@@ -27,8 +32,8 @@ export interface StructureContext {
 
 export function loadStructures(db: DB, orgId: number): StructureContext {
   const rows = db
-    .prepare('SELECT id, name, description, is_default FROM grade_structures WHERE org_id = ? ORDER BY is_default DESC, name')
-    .all(orgId) as { id: number; name: string; description: string; is_default: number }[];
+    .prepare('SELECT id, name, description, is_default, pay FROM grade_structures WHERE org_id = ? ORDER BY is_default DESC, name')
+    .all(orgId) as { id: number; name: string; description: string; is_default: number; pay: string | null }[];
   const bands = db
     .prepare(
       `SELECT b.structure_id, b.grade, b.min_points AS minPoints, b.career_level AS careerLevel, b.typical_roles AS typicalRoles
@@ -37,12 +42,16 @@ export function loadStructures(db: DB, orgId: number): StructureContext {
     .all(orgId) as (GradeBand & { structure_id: number })[];
   const byId = new Map<number, Structure>();
   for (const r of rows) {
+    const grades = sortGrades(bands.filter((b) => b.structure_id === r.id).map(({ structure_id: _s, ...g }) => g));
+    const pay = parsePay(r.pay);
     byId.set(r.id, {
       id: r.id,
       name: r.name,
       description: r.description,
       isDefault: !!r.is_default,
-      bands: sortGrades(bands.filter((b) => b.structure_id === r.id).map(({ structure_id: _s, ...g }) => g)),
+      bands: grades,
+      pay,
+      payTable: pay ? computePay(pay, grades) : null,
     });
   }
   const defaultId = rows.find((r) => r.is_default)?.id ?? rows[0]?.id;
@@ -56,6 +65,15 @@ export function loadStructures(db: DB, orgId: number): StructureContext {
     ).map((c) => [c.id, c.default_structure_id]),
   );
   return { byId, defaultId, companyDefaults };
+}
+
+function parsePay(s: string | null): PayModel | null {
+  if (!s) return null;
+  try {
+    return JSON.parse(s) as PayModel;
+  } catch {
+    return null;
+  }
 }
 
 export function resolveStructure(

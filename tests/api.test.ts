@@ -69,7 +69,7 @@ describe('demo organisation', () => {
     expect(job('SAL-10')).toMatchObject({ mode: 'multi', completeCount: 2, evaluationCount: 3 });
 
     const { structures } = (await mg.get('/api/grade-structures')).body as { structures: { name: string }[] };
-    expect(structures.map((x) => x.name).sort()).toEqual(['Acme Services', 'Blue collar', 'Managers & leaders', 'Standard']);
+    expect(structures.map((x) => x.name).sort()).toEqual(['Acme Retail (Sindh)', 'Acme Services', 'Blue collar', 'Managers & leaders', 'Standard']);
     expect((await mg.get('/api/jd/analyses')).body.length).toBeGreaterThanOrEqual(4);
 
     // evaluators see the calibrated result of an approved multi-rater job

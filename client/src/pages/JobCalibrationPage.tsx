@@ -125,7 +125,7 @@ export default function JobCalibrationPage() {
             </span>
           )}
         </div>
-        <ResultStrip result={isMgmt && !approved ? draftResult : j.result} />
+        <ResultStrip result={isMgmt && !approved ? draftResult : j.result} payTable={structures.payFor(j.gradeStructure.id)} />
         {outside && <div className="alert warn" style={{ marginTop: 12, marginBottom: 0 }}>{outside}{approved ? '.' : '. Check the agreed levels before approving.'}</div>}
       </div>
 

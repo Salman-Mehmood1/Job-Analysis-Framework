@@ -8,6 +8,7 @@
  */
 import { type Consensus, buildConsensus } from '../shared/consensus';
 import { type EvaluationInputs, type EvaluationResult, type GradeBand, evaluate } from '../shared/engine';
+import { type PayTable, zoneFor } from '../shared/pay';
 import { loadStructures, structureForPosition } from './structures';
 import type { DB } from './db';
 import { type EnrichedEvaluation, listEvaluations, parseInputs } from './services';
@@ -46,7 +47,7 @@ function loadCalibrations(db: DB, orgId: number, positionId?: number) {
   return new Map(rows.map((r) => [r.position_id, r]));
 }
 
-function buildJob(evals: EnrichedEvaluation[], cal: CalibrationRow | undefined, grades: GradeBand[]) {
+function buildJob(evals: EnrichedEvaluation[], cal: CalibrationRow | undefined, grades: GradeBand[], payTable: PayTable | null) {
   const first = evals[0];
   const multi = evals.length > 1;
   const complete = evals.filter(isComplete);
@@ -93,6 +94,8 @@ function buildJob(evals: EnrichedEvaluation[], cal: CalibrationRow | undefined, 
     basis,
     result,
     effectiveInputs,
+    /** Salary band and pay zone of the job's grade, when its structure has salary bands. */
+    pay: zoneFor(payTable, result?.grade),
     /** Management changed the levels (single-evaluation adjustment or adjusted consensus). */
     adjusted: multi ? !!cal?.adjusted_inputs : !!first.adjustedInputs,
     spread: complete.length > 1
@@ -126,7 +129,10 @@ export function listJobs(db: DB, orgId: number): JobRecord[] {
     byPos.set(e.position.id, [...(byPos.get(e.position.id) ?? []), e]);
   }
   return [...byPos.values()]
-    .map((evals) => buildJob(evals, cals.get(evals[0].position.id), ctx.byId.get(evals[0].gradeStructure.id)!.bands))
+    .map((evals) => {
+      const s = ctx.byId.get(evals[0].gradeStructure.id)!;
+      return buildJob(evals, cals.get(evals[0].position.id), s.bands, s.payTable);
+    })
     .sort((a, b) => a.position.code.localeCompare(b.position.code));
 }
 
@@ -135,7 +141,8 @@ export function getJob(db: DB, orgId: number, positionId: number) {
     .filter((e) => e.position.id === positionId)
     .reverse();
   if (!evals.length) return null;
-  const job = buildJob(evals, loadCalibrations(db, orgId, positionId).get(positionId), structureForPosition(db, orgId, positionId).structure.bands);
+  const { structure } = structureForPosition(db, orgId, positionId);
+  const job = buildJob(evals, loadCalibrations(db, orgId, positionId).get(positionId), structure.bands, structure.payTable);
   return { ...job, evaluations: evals };
 }
 

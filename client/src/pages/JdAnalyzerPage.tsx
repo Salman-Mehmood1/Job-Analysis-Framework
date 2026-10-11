@@ -249,7 +249,7 @@ export default function JdAnalyzerPage() {
           </div>
           <p>{a.summary}</p>
           {a.warnings.map((w) => <div key={w} className="small flag">⚠ {w}</div>)}
-          <div style={{ margin: '12px 0' }}><ResultStrip result={outcome.result} /></div>
+          <div style={{ margin: '12px 0' }}><ResultStrip result={outcome.result} payTable={structures.find((s) => s.id === outcome.gradeStructure?.id)?.payTable} /></div>
           <EvaluationForm inputs={a.inputs} readOnly result={outcome.result} reasons={a.rationale} />
           <div style={{ marginTop: 16 }}>
             {user.role === 'evaluator' ? (

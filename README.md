@@ -81,6 +81,18 @@ On first start a demo organisation is created with a worked example of every sce
 | `farah@demo.com` / `usman@demo.com` | Line manager / job holder, Senior Software Developer | Both submitted |
 | `tariq@demo.com` | Line manager, Quality Manager | Draft saved, not submitted (no job holder: they are optional) |
 
+**Grade structures** come in five demo variants, each with salary bands built from different inputs (Grading & Rewards Framework):
+
+| Structure | Grades → salary bands | Inputs that differ |
+|---|---|---|
+| Standard (organisation default) | 23 → 11 bands, Staff to Top Executive | The framework as-is: Punjab minimum wage, anchor 36,000 lifted to 40,000, 10% overlap, 40/50/60% spreads, provident fund |
+| Blue collar | 8 → 3 narrow bands | 30–40% spreads, 15% overlap, gratuity instead of provident fund, 1 month bonus |
+| Managers & leaders | 6 → 6 single-grade bands | 5% overlap, provident fund and gratuity, 2 months bonus |
+| Acme Services | 8 → 4 broad bands | 80–100% spreads, 25% overlap, Islamabad minimum wage, 10% provident fund |
+| Acme Retail (Sindh) | 23 → 8 generated bands | Sindh minimum wage with the lift switched off, so the lowest band fails the minimum-wage check |
+
+On **Grade structures → Salary bands & pay** you can edit the bands, cadres and entitlements, and the pay inputs; view the grade map with pay zones; and check where a salary sits in its band (compa-ratio and cost to company). Pay is visible to administrators and management only.
+
 A database created by an older version keeps its data; the app says on start when a newer demo is available.
 
 **Starting the demo again from scratch:** stop the app, run `npm run reset-demo`, then `npm start`. This **deletes all data** in `data/job-evaluation.db`.

@@ -34,7 +34,8 @@ export function evaluationRoutes(db: DB) {
   const forViewer = (u: { role: string; orgId: number }, e: EnrichedEvaluation) => {
     if (u.role !== 'evaluator') return e;
     const calibrated = (e.raterCount ?? 1) > 1 ? approvedCalibration(db, u.orgId, e.position.id) : null;
-    return { ...e, raterCount: undefined, calibrated };
+    // Pay ranges are for administrators and management only.
+    return { ...e, raterCount: undefined, pay: undefined, calibrated };
   };
 
   const load = (orgId: number, id: number) => {

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import type { PayTable } from '../../../shared/pay';
 import type { GradeBand, JobRecord } from '../api';
 import { JobBadges, jobHref, spreadFlag } from './JobBits';
 import { StatusBadge, fmt } from './ui';
@@ -10,10 +11,13 @@ type SubGroup = 'none' | 'company' | 'department';
 export function GradeGroups({
   rows,
   grades,
+  payTable,
   linkBase,
 }: {
   rows: JobRecord[];
   grades: GradeBand[];
+  /** Salary bands of the structure, if it has them. */
+  payTable?: PayTable | null;
   /** Panel root, e.g. "/admin". */
   linkBase: string;
 }) {
@@ -46,6 +50,7 @@ export function GradeGroups({
 
       {sorted.map((g, i) => {
         const upper = i === 0 ? null : sorted[i - 1].minPoints - 1;
+        const zone = payTable?.zones.find((z) => z.grade === g.grade);
         const items = scored
           .filter((r) => r.result!.grade === g.grade)
           .sort((a, b) => b.result!.totalPoints! - a.result!.totalPoints!);
@@ -65,6 +70,12 @@ export function GradeGroups({
               <span style={{ flex: 1 }}>
                 {g.careerLevel || <span className="muted">—</span>}
                 {g.typicalRoles && <span className="muted small"> · {g.typicalRoles}</span>}
+                {zone && (
+                  <span className="small" style={{ display: 'block' }}>
+                    <span className="badge b-neutral">{zone.band} · {zone.cadre}</span>{' '}
+                    <span className="muted">{payTable!.currency} {fmt(zone.zoneMin)}–{fmt(zone.zoneMax)} (band {fmt(zone.bandMin)}–{fmt(zone.bandMax)})</span>
+                  </span>
+                )}
               </span>
               <div className="bar-track" aria-hidden><div className="bar-fill" style={{ width: `${(items.length / max) * 100}%` }} /></div>
               <strong className="num" style={{ minWidth: 70 }}>{items.length} job{items.length === 1 ? '' : 's'}</strong>

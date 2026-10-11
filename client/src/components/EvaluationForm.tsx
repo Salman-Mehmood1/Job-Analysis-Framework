@@ -11,6 +11,8 @@ import {
   MAGNITUDES,
 } from '../../../shared/engine';
 import { fmt } from './ui';
+import { type PayTable, zoneFor } from '../../../shared/pay';
+import { PayLine } from './PaySetup';
 
 type Key = keyof EvaluationInputs;
 
@@ -151,7 +153,8 @@ export function EvaluationForm({
   );
 }
 
-export function ResultStrip({ result }: { result: EvaluationResult | null }) {
+/** Points, profile and grade of a result; with a pay table, also the grade's salary band and pay zone. */
+export function ResultStrip({ result, payTable }: { result: EvaluationResult | null; payTable?: PayTable | null }) {
   if (!result) return <div className="muted">No levels entered yet.</div>;
   return (
     <div>
@@ -166,6 +169,7 @@ export function ResultStrip({ result }: { result: EvaluationResult | null }) {
       {result.complete && (
         <div className="row" style={{ marginTop: 8 }}>
           <span className="muted small">{result.careerLevel}</span>
+          {payTable && <PayLine pay={zoneFor(payTable, result.grade)} />}
           {result.checks.length === 0 ? (
             <span className="badge b-approved">Checks OK</span>
           ) : (

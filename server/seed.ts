@@ -14,7 +14,8 @@
 import bcrypt from 'bcryptjs';
 import fs from 'node:fs';
 import path from 'node:path';
-import { EMPTY_INPUTS, type EvaluationInputs } from '../shared/engine';
+import { DEFAULT_GRADES, EMPTY_INPUTS, type EvaluationInputs, type GradeBand } from '../shared/engine';
+import { type CadreInput, type PayBandInput, type PayModel, frameworkPayModel, generatePayBands } from '../shared/pay';
 import {
   type Answers,
   EMPTY_EV_QUESTIONNAIRE,
@@ -75,48 +76,127 @@ function dateIn(days: number): string {
 
 // --------------------------------------------------------------------- data
 
-const STRUCTURES = {
+/** A band of a demo pay scenario: code, cadre, grades from–to, tier. */
+type BandSpec = [string, string, number, number, string];
+const band = ([code, cadre, gradeFrom, gradeTo, tier]: BandSpec, rounding: number): PayBandInput => ({ code, cadre, gradeFrom, gradeTo, tier, overlapOverride: null, rounding });
+/** A framework cadre, optionally renamed and changed. */
+const cadre = (from: string, patch: Partial<CadreInput> = {}): CadreInput => ({ ...frameworkPayModel().cadres.find((c) => c.name === from)!, ...patch });
+
+interface StructureSpec {
+  name: string;
+  description: string;
+  grades: GradeBand[];
+  /** Salary bands built from this scenario's inputs (each structure uses different ones). */
+  pay: PayModel;
+}
+
+const BLUE_COLLAR_GRADES: GradeBand[] = [
+  { grade: 1, minPoints: 0, careerLevel: 'Entry', typicalRoles: 'Helper, attendant' },
+  { grade: 2, minPoints: 90, careerLevel: 'Entry', typicalRoles: 'Labourer, packer, store assistant' },
+  { grade: 3, minPoints: 115, careerLevel: 'Semi-skilled', typicalRoles: 'Machine operator, driver' },
+  { grade: 4, minPoints: 145, careerLevel: 'Semi-skilled', typicalRoles: 'Senior operator' },
+  { grade: 5, minPoints: 180, careerLevel: 'Skilled', typicalRoles: 'Inspector, technician' },
+  { grade: 6, minPoints: 225, careerLevel: 'Skilled', typicalRoles: 'Electrician, senior technician' },
+  { grade: 7, minPoints: 280, careerLevel: 'Lead hand', typicalRoles: 'Charge hand' },
+  { grade: 8, minPoints: 350, careerLevel: 'Supervisory', typicalRoles: 'Shift supervisor' },
+];
+const MANAGER_GRADES: GradeBand[] = [
+  { grade: 1, minPoints: 0, careerLevel: 'Team leader', typicalRoles: 'Team leader' },
+  { grade: 2, minPoints: 400, careerLevel: 'Manager', typicalRoles: 'Section manager' },
+  { grade: 3, minPoints: 600, careerLevel: 'Senior manager', typicalRoles: 'Quality manager, procurement manager' },
+  { grade: 4, minPoints: 1000, careerLevel: 'Head of function', typicalRoles: 'Finance manager' },
+  { grade: 5, minPoints: 1400, careerLevel: 'Director', typicalRoles: 'Plant manager' },
+  { grade: 6, minPoints: 2000, careerLevel: 'Executive', typicalRoles: 'Chief operating officer' },
+];
+const SERVICES_GRADES: GradeBand[] = [
+  { grade: 1, minPoints: 0, careerLevel: 'Support', typicalRoles: 'Receptionist, office assistant' },
+  { grade: 2, minPoints: 175, careerLevel: 'Associate', typicalRoles: 'Coordinator, officer' },
+  { grade: 3, minPoints: 300, careerLevel: 'Professional', typicalRoles: 'Analyst, developer, HR officer' },
+  { grade: 4, minPoints: 480, careerLevel: 'Senior professional', typicalRoles: 'Senior developer, sales executive' },
+  { grade: 5, minPoints: 750, careerLevel: 'Manager', typicalRoles: 'Team manager' },
+  { grade: 6, minPoints: 1150, careerLevel: 'Head of function', typicalRoles: 'Head of IT, HR manager' },
+  { grade: 7, minPoints: 1750, careerLevel: 'Director', typicalRoles: 'Sales director' },
+  { grade: 8, minPoints: 2700, careerLevel: 'Executive', typicalRoles: 'Managing director' },
+];
+
+const STRUCTURES: Record<'blueCollar' | 'managers' | 'services' | 'retail', StructureSpec> = {
+  // 8 grades in 3 narrow bands; 30–40% spreads, 15% overlap, gratuity instead of PF, a festival bonus,
+  // everyone covered by social security. The anchor is below the Punjab minimum wage and is lifted.
   blueCollar: {
     name: 'Blue collar',
-    description: 'Operators, drivers, technicians and support staff on hourly pay scales.',
-    bands: [
-      { grade: 1, minPoints: 0, careerLevel: 'Entry', typicalRoles: 'Helper, attendant' },
-      { grade: 2, minPoints: 90, careerLevel: 'Entry', typicalRoles: 'Labourer, packer, store assistant' },
-      { grade: 3, minPoints: 115, careerLevel: 'Semi-skilled', typicalRoles: 'Machine operator, driver' },
-      { grade: 4, minPoints: 145, careerLevel: 'Semi-skilled', typicalRoles: 'Senior operator' },
-      { grade: 5, minPoints: 180, careerLevel: 'Skilled', typicalRoles: 'Inspector, technician' },
-      { grade: 6, minPoints: 225, careerLevel: 'Skilled', typicalRoles: 'Electrician, senior technician' },
-      { grade: 7, minPoints: 280, careerLevel: 'Lead hand', typicalRoles: 'Charge hand' },
-      { grade: 8, minPoints: 350, careerLevel: 'Supervisory', typicalRoles: 'Shift supervisor' },
-    ],
+    description: 'Operators, drivers, technicians and support staff on hourly pay scales. 3 narrow bands, gratuity scheme, 1 month bonus.',
+    grades: BLUE_COLLAR_GRADES,
+    pay: {
+      ...frameworkPayModel(),
+      anchor: 38000,
+      overlap: 0.15,
+      tiers: [{ name: 'Entry', spread: 0.3 }, { name: 'Skilled', spread: 0.35 }, { name: 'Lead', spread: 0.4 }],
+      retirement: 'Gratuity',
+      bonusMonths: 1,
+      bands: ([['W-1', 'Workers', 1, 3, 'Entry'], ['W-2', 'Skilled workers', 4, 6, 'Skilled'], ['W-3', 'Supervisors', 7, 8, 'Lead']] as BandSpec[]).map((b) => band(b, 1000)),
+      cadres: [
+        cadre('Staff', { name: 'Workers', designations: 'Helper, packer, machine operator, driver, store assistant, office attendant' }),
+        cadre('Staff', { name: 'Skilled workers', designations: 'Senior operator, inspector, technician, electrician', mealRate: 300, hotelCap: 4000 }),
+        cadre('Officer', { name: 'Supervisors', designations: 'Charge hand, shift supervisor', socialSecurity: true, ipdCover: 300000 }),
+      ],
+    },
   },
+  // One band per grade with a tight 5% overlap, so each step is a clear promotion; PF and gratuity, 2 months bonus.
   managers: {
     name: 'Managers & leaders',
-    description: 'People managers in Acme Manufacturing; individual contributors there stay on the Standard structure.',
-    bands: [
-      { grade: 1, minPoints: 0, careerLevel: 'Team leader', typicalRoles: 'Team leader' },
-      { grade: 2, minPoints: 400, careerLevel: 'Manager', typicalRoles: 'Section manager' },
-      { grade: 3, minPoints: 600, careerLevel: 'Senior manager', typicalRoles: 'Quality manager, procurement manager' },
-      { grade: 4, minPoints: 1000, careerLevel: 'Head of function', typicalRoles: 'Finance manager' },
-      { grade: 5, minPoints: 1400, careerLevel: 'Director', typicalRoles: 'Plant manager' },
-      { grade: 6, minPoints: 2000, careerLevel: 'Executive', typicalRoles: 'Chief operating officer' },
-    ],
+    description: 'People managers in Acme Manufacturing; individual contributors there stay on the Standard structure. One band per grade, 5% overlap.',
+    grades: MANAGER_GRADES,
+    pay: {
+      ...frameworkPayModel(),
+      anchor: 175000,
+      overlap: 0.05,
+      retirement: 'Both',
+      pfRate: 0.1,
+      bonusMonths: 2,
+      bands: ([
+        ['M-1', 'Manager', 1, 1, 'Mid'], ['M-2', 'Senior Manager', 2, 2, 'Mid'], ['M-3', 'DGM', 3, 3, 'Senior'],
+        ['M-4', 'GM', 4, 4, 'Senior'], ['M-5', 'Chief', 5, 5, 'Senior'], ['M-6', 'Top Executive', 6, 6, 'Senior'],
+      ] as BandSpec[]).map((b) => band(b, 5000)),
+      cadres: ['Manager', 'Senior Manager', 'DGM', 'GM', 'Chief', 'Top Executive'].map((c) => cadre(c)),
+    },
   },
+  // Broadbanding: 8 grades in 4 wide bands (80–100% spreads, 25% overlap), Islamabad minimum wage, 10% PF, 2 months bonus.
   services: {
     name: 'Acme Services',
-    description: 'Broader bands used across the services company (its company default).',
-    bands: [
-      { grade: 1, minPoints: 0, careerLevel: 'Support', typicalRoles: 'Receptionist, office assistant' },
-      { grade: 2, minPoints: 175, careerLevel: 'Associate', typicalRoles: 'Coordinator, officer' },
-      { grade: 3, minPoints: 300, careerLevel: 'Professional', typicalRoles: 'Analyst, developer, HR officer' },
-      { grade: 4, minPoints: 480, careerLevel: 'Senior professional', typicalRoles: 'Senior developer, sales executive' },
-      { grade: 5, minPoints: 750, careerLevel: 'Manager', typicalRoles: 'Team manager' },
-      { grade: 6, minPoints: 1150, careerLevel: 'Head of function', typicalRoles: 'Head of IT, HR manager' },
-      { grade: 7, minPoints: 1750, careerLevel: 'Director', typicalRoles: 'Sales director' },
-      { grade: 8, minPoints: 2700, careerLevel: 'Executive', typicalRoles: 'Managing director' },
-    ],
+    description: 'Broad bands used across the services company (its company default): 4 bands, 80–100% spreads, Islamabad.',
+    grades: SERVICES_GRADES,
+    pay: {
+      ...frameworkPayModel(),
+      region: 'Islamabad (ICT)',
+      anchor: 45000,
+      overlap: 0.25,
+      tiers: [{ name: 'Broad', spread: 0.8 }, { name: 'Broad senior', spread: 1 }],
+      pfRate: 0.1,
+      bonusMonths: 2,
+      bands: ([['BB-1', 'Support', 1, 2, 'Broad'], ['BB-2', 'Professional', 3, 4, 'Broad'], ['BB-3', 'Management', 5, 6, 'Broad senior'], ['BB-4', 'Leadership', 7, 8, 'Broad senior']] as BandSpec[]).map((b) => band(b, 5000)),
+      cadres: [
+        cadre('Staff', { name: 'Support', designations: 'Receptionist, office assistant, coordinator' }),
+        cadre('Executive', { name: 'Professional', designations: 'Developer, HR officer, analyst, sales executive' }),
+        cadre('Manager', { name: 'Management', designations: 'Team manager, Head of IT, HR manager' }),
+        cadre('GM', { name: 'Leadership', designations: 'Sales director, managing director' }),
+      ],
+    },
   },
-} as const;
+  // The 23 standard grades regrouped into 8 bands for Sindh. The minimum-wage lift is switched off, so
+  // the lowest band shows the "below minimum wage" check (Sindh 43,000 vs the 36,000 anchor).
+  retail: {
+    name: 'Acme Retail (Sindh)',
+    description: 'Draft for the retail company in Sindh: 23 standard grades in 8 generated bands. The minimum-wage lift is off, so the lowest band fails the minimum-wage check.',
+    grades: DEFAULT_GRADES,
+    pay: {
+      ...frameworkPayModel(),
+      region: 'Sindh',
+      liftToMinimumWage: false,
+      bands: generatePayBands(DEFAULT_GRADES, 8),
+      cadres: frameworkPayModel().cadres.filter((c) => generatePayBands(DEFAULT_GRADES, 8).some((b) => b.cadre === c.name)),
+    },
+  },
+};
 type StructureKey = keyof typeof STRUCTURES;
 
 interface PositionSpec {
@@ -155,7 +235,7 @@ const POSITIONS: PositionSpec[] = [
   { code: 'SAL-03', title: 'Sales Executive', company: 'Acme Services', dept: 'Sales', family: 'Sales', jd: 'Manages a portfolio of key accounts, negotiates contracts and achieves a $2M annual sales target.' },
   { code: 'SAL-06', title: 'Regional Sales Manager', company: 'Acme Services', dept: 'Sales', family: 'Sales', jd: 'Leads 8 sales executives in the northern region, sets account plans and owns a $15M regional revenue target. Reports to the Sales Director.' },
   { code: 'SAL-10', title: 'Sales Director', company: 'Acme Services', dept: 'Sales', family: 'Sales', jd: 'Leads national sales across three regions, sets commercial strategy and owns $120M revenue. Reports to the CEO.' },
-  // Acme Retail: no company default, so the organisation default (Standard) applies
+  // Acme Retail: company default "Acme Retail (Sindh)"; the store assistant is on Blue collar
   { code: 'RET-01', title: 'Store Assistant', company: 'Acme Retail', dept: 'Stores', family: 'Retail', structure: 'blueCollar', jd: 'Serves customers, operates the till and replenishes shelves following store routines.' },
   { code: 'RET-05', title: 'Store Manager', company: 'Acme Retail', dept: 'Stores', family: 'Retail', jd: 'Runs a store of 25 staff: rosters, stock, visual standards and customer service. Accountable for $6M annual store sales.' },
   { code: 'RET-09', title: 'Area Manager', company: 'Acme Retail', dept: 'Stores', family: 'Retail', jd: 'Leads 8 store managers across the area, drives sales and standards, and owns $45M area sales.' },
@@ -273,7 +353,13 @@ export function seedDemo(db: DB) {
 
   db.transaction(() => {
     const orgId = Number(db.prepare("INSERT INTO organizations (name, created_at) VALUES ('Acme Group (demo)', ?)").run(ago(70)).lastInsertRowid);
-    seedDefaultGrades(db, orgId);
+    // Standard: the organisation default, with the workbook's 11 salary bands over its 23 grades.
+    const standard = seedDefaultGrades(db, orgId);
+    db.prepare('UPDATE grade_structures SET description = ?, pay = ? WHERE id = ?').run(
+      'The organisation-wide structure: 23 job grades in 11 salary bands (Grading & Rewards Framework, Punjab).',
+      JSON.stringify(frameworkPayModel()),
+      standard,
+    );
 
     // users
     const hash = bcrypt.hashSync('demo1234', 10);
@@ -288,7 +374,7 @@ export function seedDemo(db: DB) {
     // grade structures (Standard is the organisation default)
     const structureId = {} as Record<StructureKey, number>;
     for (const [key, s] of Object.entries(STRUCTURES) as [StructureKey, (typeof STRUCTURES)[StructureKey]][]) {
-      structureId[key] = createStructure(db, orgId, s.name, s.description, s.bands.map((b) => ({ ...b })));
+      structureId[key] = createStructure(db, orgId, s.name, s.description, s.grades.map((g) => ({ ...g })), false, s.pay);
     }
 
     // companies, departments, positions
@@ -314,6 +400,7 @@ export function seedDemo(db: DB) {
     };
     POSITIONS.forEach(addPosition);
     db.prepare('UPDATE companies SET default_structure_id = ? WHERE id = ?').run(structureId.services, companies.get('Acme Services')!);
+    db.prepare('UPDATE companies SET default_structure_id = ? WHERE id = ?').run(structureId.retail, companies.get('Acme Retail')!);
 
     // helpers
     const history = (evId: number, who: number, action: string, at: number, details: object = {}) =>
@@ -578,7 +665,11 @@ export function topUpDemo(db: DB) {
     invite.run(orgId, headOfIt.id, jobHolder, 'JH', admin);
   })();
   if (added.length) console.log(`Added demo accounts to your existing demo organisation: ${added.join(', ')} (password demo1234)`);
-  if (!db.prepare("SELECT 1 FROM users WHERE email = 'evaluator3@demo.com'").get()) {
+  // Older demos lack the third evaluator or the salary bands.
+  if (
+    !db.prepare("SELECT 1 FROM users WHERE email = 'evaluator3@demo.com'").get() ||
+    !db.prepare('SELECT 1 FROM grade_structures WHERE org_id = ? AND pay IS NOT NULL').get(orgId)
+  ) {
     console.log('This database holds an older, smaller demo. To rebuild it with every scenario, stop the app and run "npm run reset-demo" (this deletes everything in the database).');
   }
 }

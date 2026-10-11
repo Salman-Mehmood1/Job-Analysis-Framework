@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Evaluation, JobRecord } from '../api';
 import { STATUS_LABEL } from './ui';
 
-export type Dim = 'company' | 'department' | 'role' | 'family' | 'structure' | 'grade' | 'career' | 'status' | 'evaluator';
+export type Dim = 'company' | 'department' | 'role' | 'family' | 'structure' | 'grade' | 'career' | 'band' | 'cadre' | 'status' | 'evaluator';
 export type Filters = Partial<Record<Dim, string[]>>;
 
 export const DIM_LABEL: Record<Dim, string> = {
@@ -13,11 +13,14 @@ export const DIM_LABEL: Record<Dim, string> = {
   structure: 'Grade structure',
   grade: 'Grade',
   career: 'Career level',
+  band: 'Salary band',
+  cadre: 'Cadre',
   status: 'Status',
   evaluator: 'Evaluator',
 };
 
 const NONE = '(none)';
+const NO_BAND = 'No salary band';
 
 /** Slicers work on individual evaluations or on job-level records. */
 export type SliceRow = Evaluation | JobRecord;
@@ -41,6 +44,9 @@ export function dimValue(e: SliceRow, d: Dim): string {
     // Grade numbers only mean something within their structure, so the value carries both.
     case 'grade': return e.result?.grade != null ? `${e.gradeStructure.name} · G${e.result.grade}` : 'Ungraded';
     case 'career': return e.result?.careerLevel || 'Ungraded';
+    // Band codes, like grades, belong to their structure.
+    case 'band': return e.pay ? `${e.gradeStructure.name} · ${e.pay.band}` : NO_BAND;
+    case 'cadre': return e.pay?.cadre ?? NO_BAND;
     case 'status': return e.status;
     case 'evaluator': return evaluatorNames(e).join(', ');
   }
@@ -54,7 +60,8 @@ export function applyFilters<T extends SliceRow>(rows: T[], f: Filters, except?:
 
 // Numeric-aware so "Standard · G9" sorts before "Standard · G10"; "Ungraded" last.
 const sortValues = (_d: Dim, vals: string[]) =>
-  vals.sort((a, b) => (a === 'Ungraded' ? 1 : b === 'Ungraded' ? -1 : a.localeCompare(b, undefined, { numeric: true })));
+  vals.sort((a, b) => (last(a) ? 1 : last(b) ? -1 : a.localeCompare(b, undefined, { numeric: true })));
+const last = (v: string) => v === 'Ungraded' || v === NO_BAND;
 
 function Slicer({
   dim,

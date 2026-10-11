@@ -109,14 +109,15 @@ export default function AnalyticsPage() {
 
   const exportCsv = () =>
     downloadCsv('job-evaluations.csv', [
-      ['Code', 'Role', 'Job family', 'Company', 'Department', 'Evaluators', 'Result basis', 'Status', 'KH tech', 'KH breadth', 'KH HR', 'KH shade', 'PS env', 'PS challenge', 'PS percentage (lower/higher)', 'AC freedom', 'AC magnitude', 'AC impact', 'AC shade', 'KH pts', 'PS %', 'PS pts', 'AC pts', 'Total', 'Profile', 'Grade structure', 'Grade', 'Career level', 'Checks', 'Adjusted by management', 'Lowest evaluator total', 'Highest evaluator total'],
+      ['Code', 'Role', 'Job family', 'Company', 'Department', 'Evaluators', 'Result basis', 'Status', 'KH tech', 'KH breadth', 'KH HR', 'KH shade', 'PS env', 'PS challenge', 'PS percentage (lower/higher)', 'AC freedom', 'AC magnitude', 'AC impact', 'AC shade', 'KH pts', 'PS %', 'PS pts', 'AC pts', 'Total', 'Profile', 'Grade structure', 'Grade', 'Career level', 'Salary band', 'Cadre', 'Currency', 'Band minimum', 'Band midpoint', 'Band maximum', 'Grade zone minimum', 'Grade zone maximum', 'Checks', 'Adjusted by management', 'Lowest evaluator total', 'Highest evaluator total'],
       ...tableRows.map((r) => {
         const i = r.effectiveInputs;
         const x = r.result;
         return [
           r.position.code, r.position.title, r.position.jobFamily, r.company.name, r.department.name, r.evaluators.map((e) => e.name).join('; '), BASIS_LABEL[r.basis], STATUS_LABEL[r.status],
           i?.khTechnical, i?.khBreadth, i?.khHumanRelations, i?.khShade, i?.psEnvironment, i?.psChallenge, i?.psPick, i?.acFreedom, i?.acMagnitude, i?.acImpact, i?.acShade,
-          x?.khPoints, x?.psPercent, x?.psPoints, x?.acPoints, x?.totalPoints, x?.profile, r.gradeStructure.name, x?.grade, x?.careerLevel, x?.checks.join('; '),
+          x?.khPoints, x?.psPercent, x?.psPoints, x?.acPoints, x?.totalPoints, x?.profile, r.gradeStructure.name, x?.grade, x?.careerLevel,
+          r.pay?.band, r.pay?.cadre, r.pay?.currency, r.pay?.bandMin, r.pay?.bandMid, r.pay?.bandMax, r.pay?.zoneMin, r.pay?.zoneMax, x?.checks.join('; '),
           r.adjusted ? 'Yes' : 'No', r.spread?.minPoints, r.spread?.maxPoints,
         ];
       }),
@@ -133,7 +134,7 @@ export default function AnalyticsPage() {
       </div>
       <ErrorAlert error={evals.error ?? structures.error} />
 
-      <SlicerBar rows={all} filters={filters} onChange={setFilters} />
+      <SlicerBar rows={all} filters={filters} onChange={setFilters} dims={['company', 'department', 'role', 'structure', 'grade', 'band', 'cadre', 'family', 'career', 'status', 'evaluator']} />
 
       <div className="grid grid-kpi" style={{ marginBottom: 16 }}>
         <Kpi label="Jobs in view" value={fmt(rows.length)} />
@@ -236,7 +237,7 @@ export default function AnalyticsPage() {
       {tab === 'grades' && (
         <div>
           {structurePicker && <div className="card" style={{ marginBottom: 12 }}>{structurePicker}<p className="small muted" style={{ margin: '6px 0 0' }}>Jobs on other structures are listed under their own structure.</p></div>}
-          <GradeGroups rows={viewRows} grades={gradeList} linkBase={linkBase} />
+          <GradeGroups rows={viewRows} grades={gradeList} payTable={viewStructure?.payTable ?? null} linkBase={linkBase} />
         </div>
       )}
 
@@ -246,7 +247,7 @@ export default function AnalyticsPage() {
             <thead>
               <tr>
                 {th('code', 'Code')}{th('role', 'Role')}{th('company', 'Company')}{th('department', 'Department')}
-                {th('evaluator', 'Evaluators')}{th('status', 'Status')}{th('points', 'Points', true)}{th('structure', 'Structure')}{th('grade', 'Grade', true)}<th>Profile</th><th>Checks</th>
+                {th('evaluator', 'Evaluators')}{th('status', 'Status')}{th('points', 'Points', true)}{th('structure', 'Structure')}{th('grade', 'Grade', true)}{th('band', 'Band')}<th className="num">Pay range (mid)</th><th>Profile</th><th>Checks</th>
               </tr>
             </thead>
             <tbody>
@@ -260,11 +261,13 @@ export default function AnalyticsPage() {
                   <td className="num">{fmt(r.result?.totalPoints)}</td>
                   <td className="small">{r.gradeStructure.name}</td>
                   <td className="num">{r.result?.grade ?? '—'}</td>
+                  <td className="small">{r.pay ? `${r.pay.band} · ${r.pay.cadre}` : '—'}</td>
+                  <td className="num small">{r.pay ? <>{fmt(r.pay.bandMin)}–{fmt(r.pay.bandMax)} <span className="muted">({fmt(r.pay.bandMid)})</span></> : '—'}</td>
                   <td>{r.result?.profile ?? '—'}</td>
                   <td className="small">{r.result?.complete ? [...r.result.checks, spreadFlag(r)].filter(Boolean).join('; ') || 'OK' : ''}</td>
                 </tr>
               ))}
-              {!tableRows.length && <tr><td colSpan={11} className="muted">No jobs match the current slicers.</td></tr>}
+              {!tableRows.length && <tr><td colSpan={13} className="muted">No jobs match the current slicers.</td></tr>}
             </tbody>
           </table>
         </div>

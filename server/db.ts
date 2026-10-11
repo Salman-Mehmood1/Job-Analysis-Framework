@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_GRADES, type GradeBand } from '../shared/engine';
+import type { PayModel } from '../shared/pay';
 
 export type DB = Database.Database;
 
@@ -219,6 +220,8 @@ function migrate(db: DB) {
   addColumn(db, 'positions', 'grade_structure_id', 'INTEGER REFERENCES grade_structures(id) ON DELETE SET NULL');
   addColumn(db, 'companies', 'default_structure_id', 'INTEGER REFERENCES grade_structures(id) ON DELETE SET NULL');
   addColumn(db, 'jd_analyses', 'structure_id', 'INTEGER REFERENCES grade_structures(id) ON DELETE SET NULL');
+  // Salary bands, cadres and pay inputs of a structure (JSON PayModel); null = points-only structure.
+  addColumn(db, 'grade_structures', 'pay', 'TEXT');
   // Each organisation's original single grade table becomes its default "Standard" structure.
   const orgs = db
     .prepare('SELECT id FROM organizations o WHERE NOT EXISTS (SELECT 1 FROM grade_structures s WHERE s.org_id = o.id)')
@@ -233,11 +236,19 @@ function migrate(db: DB) {
   }
 }
 
-export function createStructure(db: DB, orgId: number, name: string, description: string, bands: GradeBand[], isDefault = false): number {
+export function createStructure(
+  db: DB,
+  orgId: number,
+  name: string,
+  description: string,
+  bands: GradeBand[],
+  isDefault = false,
+  pay: PayModel | null = null,
+): number {
   const id = Number(
     db
-      .prepare('INSERT INTO grade_structures (org_id, name, description, is_default) VALUES (?, ?, ?, ?)')
-      .run(orgId, name, description, isDefault ? 1 : 0).lastInsertRowid,
+      .prepare('INSERT INTO grade_structures (org_id, name, description, is_default, pay) VALUES (?, ?, ?, ?, ?)')
+      .run(orgId, name, description, isDefault ? 1 : 0, pay ? JSON.stringify(pay) : null).lastInsertRowid,
   );
   replaceBands(db, id, bands);
   return id;

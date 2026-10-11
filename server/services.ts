@@ -1,5 +1,6 @@
 import { EMPTY_INPUTS, type EvaluationInputs, evaluate } from '../shared/engine';
 import type { DB } from './db';
+import { zoneFor } from '../shared/pay';
 import { type StructureContext, loadStructures, resolveStructure } from './structures';
 
 export function parseInputs(json: string | null): EvaluationInputs | null {
@@ -68,6 +69,7 @@ function enrich(row: EvalRow, ctx: StructureContext) {
   const inputs = parseInputs(row.inputs);
   const adjusted = parseInputs(row.adjusted_inputs);
   const effective = adjusted ?? inputs;
+  const result = effective ? evaluate(effective, grades) : null;
   return {
     id: row.id,
     position: {
@@ -104,7 +106,9 @@ function enrich(row: EvalRow, ctx: StructureContext) {
     /** Evaluator's own score. */
     originalResult: inputs ? evaluate(inputs, grades) : null,
     /** Score after any management adjustment; this is what grading uses. */
-    result: effective ? evaluate(effective, grades) : null,
+    result,
+    /** Salary band, cadre and pay zone of the job's grade (when the structure has salary bands). */
+    pay: zoneFor(structure.payTable, result?.grade),
   };
 }
 
