@@ -7,6 +7,7 @@ import type { DB } from '../db';
 import { HttpError, body, idParam, me } from '../http';
 import { getJob, isComplete, listJobs } from '../jobs';
 import { logHistory } from '../services';
+import { pendingEvaluators, pendingEvaluatorsMessage } from '../workflow';
 
 /**
  * Job-level results and calibration of jobs with several evaluators.
@@ -46,6 +47,9 @@ export function jobRoutes(db: DB) {
     if (job.calibration?.status === 'approved') throw new HttpError(409, 'Reopen the calibration before changing it');
     const b = body(req, z.object({ inputs: inputsSchema.nullable(), comment: z.string().max(5000).default('') }));
     if (b.inputs && !inputsComplete(b.inputs)) throw new HttpError(400, 'Set every element');
+    // Adjusting the consensus waits until every evaluator has submitted (reverting to it is always allowed).
+    const pending = pendingEvaluators(db, job.id);
+    if (b.inputs && pending.length) throw new HttpError(409, pendingEvaluatorsMessage(pending));
     upsert(u.orgId, job.id);
     db.prepare(
       "UPDATE calibrations SET adjusted_inputs = ?, comment = ?, updated_by = ?, updated_at = datetime('now') WHERE position_id = ?",
@@ -58,6 +62,8 @@ export function jobRoutes(db: DB) {
     const { u, job } = multiJob(req);
     if (job.calibration?.status === 'approved') throw new HttpError(409, 'Already approved');
     const b = body(req, z.object({ comment: z.string().max(5000).optional() }));
+    const pending = pendingEvaluators(db, job.id);
+    if (pending.length) throw new HttpError(409, pendingEvaluatorsMessage(pending));
     const included = job.evaluations.filter(isComplete);
     if (included.length < 2) throw new HttpError(400, 'At least two submitted evaluations are needed to calibrate');
     const final = job.calibration?.adjustedInputs ?? job.consensus?.inputs;

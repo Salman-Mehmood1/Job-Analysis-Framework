@@ -6,6 +6,7 @@ import type { DB } from '../db';
 import { HttpError, body, idParam, me } from '../http';
 import { invitePeople, loadPositionPeople } from '../people';
 import { refreshQuestionnaireEvaluations } from '../questionnaire';
+import { LOCKED_MESSAGE, questionnaireLocked } from '../workflow';
 
 /**
  * Questionnaire responses from job holders (JH, optional) and line managers (LM).
@@ -98,6 +99,7 @@ export function responseRoutes(db: DB) {
   r.post('/mine/:id/submit', respondent, (req, res) => {
     const { u, row } = own(req);
     if (row.status === 'submitted') throw new HttpError(409, 'Already submitted');
+    if (questionnaireLocked(db, row.position_id)) throw new HttpError(409, 'The evaluation of this job has already been submitted without your answers; contact the administrator.');
     if (!Object.keys(JSON.parse(row.answers)).length) throw new HttpError(400, 'Answer at least one question before submitting');
     db.transaction(() => {
       db.prepare("UPDATE questionnaire_responses SET status = 'submitted', submitted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?").run(row.id);
@@ -215,6 +217,7 @@ export function responseRoutes(db: DB) {
 
   r.post('/:id/reopen', admin, (req, res) => {
     const { u, row } = adminOwned(req);
+    if (questionnaireLocked(db, row.position_id)) throw new HttpError(409, LOCKED_MESSAGE);
     db.transaction(() => {
       db.prepare("UPDATE questionnaire_responses SET status = 'in_progress', submitted_at = NULL, updated_at = datetime('now') WHERE id = ?").run(row.id);
       refreshQuestionnaireEvaluations(db, u.orgId, row.position_id);
@@ -224,6 +227,8 @@ export function responseRoutes(db: DB) {
 
   r.delete('/:id', admin, (req, res) => {
     const { u, row } = adminOwned(req);
+    // A pending request can always be withdrawn; submitted answers are fixed once the evaluation using them is submitted.
+    if (row.status === 'submitted' && questionnaireLocked(db, row.position_id)) throw new HttpError(409, LOCKED_MESSAGE);
     db.transaction(() => {
       db.prepare('DELETE FROM questionnaire_responses WHERE id = ?').run(row.id);
       refreshQuestionnaireEvaluations(db, u.orgId, row.position_id);

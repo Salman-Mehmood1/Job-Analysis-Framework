@@ -71,8 +71,10 @@ function buildJob(evals: EnrichedEvaluation[], cal: CalibrationRow | undefined, 
     effectiveInputs = finalInputs ?? adjusted ?? consensus?.inputs ?? null;
     basis = finalInputs ? 'calibrated' : adjusted ? 'adjusted_consensus' : 'consensus';
     result = effectiveInputs ? evaluate(effectiveInputs, grades) : null;
+    // Awaiting review only once every evaluator has submitted: calibration waits for all of them.
+    const open = evals.some((e) => ['assigned', 'in_progress', 'returned'].includes(e.status));
     if (cal?.status === 'approved') status = 'approved';
-    else if (complete.length >= 2) status = 'submitted';
+    else if (complete.length >= 2 && !open) status = 'submitted';
     else if (evals.some((e) => e.status !== 'assigned')) status = 'in_progress';
     else status = 'assigned';
   }

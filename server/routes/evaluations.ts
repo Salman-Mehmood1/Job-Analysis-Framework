@@ -9,6 +9,12 @@ import { approvedCalibration, isMultiRater } from '../jobs';
 import { cleanAnswers, consolidate } from '../../shared/questionnaire';
 import { listResponses, parseEvQuestionnaire, questionnaireView, submittedAnswers } from '../questionnaire';
 import { type InviteSkip, activeUser, evaluatorConflict, invitePeople, peopleOf, setPositionPeople } from '../people';
+import {
+  OPEN_STATUSES,
+  approvedMessage,
+  jobApproval,
+  questionnaireWaits,
+} from '../workflow';
 import { type EnrichedEvaluation, getEvaluation, getHistory, listEvaluations, logHistory } from '../services';
 
 
@@ -124,7 +130,12 @@ export function evaluationRoutes(db: DB) {
             people = [...(d.lineManager ? [{ userId: d.lineManager.id, role: 'LM' as const }] : []), ...d.jobHolders.map((j) => ({ userId: j.id, role: 'JH' as const }))];
           }
         }
+        const approval = jobApproval(db, pid);
         for (const evaluatorId of evaluatorIds) {
+          if (approval) {
+            skipped.push({ positionId: pid, evaluatorId, reason: `was not assigned: ${approvedMessage(approval)}` });
+            continue;
+          }
           if (db.prepare('SELECT 1 FROM evaluations WHERE position_id = ? AND evaluator_id = ?').get(pid, evaluatorId)) {
             skipped.push({ positionId: pid, evaluatorId, reason: 'already evaluates this job' });
             continue;
@@ -144,7 +155,7 @@ export function evaluationRoutes(db: DB) {
           logHistory(db, id, u.id, 'assigned', { evaluatorId });
           ids.push(id);
         }
-        if (people.length && db.prepare("SELECT 1 FROM evaluations WHERE position_id = ? AND method = 'questionnaire'").get(pid)) {
+        if (!approval && people.length && db.prepare("SELECT 1 FROM evaluations WHERE position_id = ? AND method = 'questionnaire'").get(pid)) {
           const r = invitePeople(db, u.orgId, pid, u.id, people, b.respondentDueDate ?? b.dueDate ?? null);
           invited.push(...r.invited);
           inviteSkipped.push(...r.skipped.filter((x) => x.reason !== 'has already been asked'));
@@ -164,9 +175,19 @@ export function evaluationRoutes(db: DB) {
         evaluatorId: z.number().int().optional(),
         dueDate: z.string().max(20).nullable().optional(),
         instructions: z.string().max(5000).optional(),
+        /** How the evaluator works: set by the administrator, not by the evaluator. */
+        method: z.enum(['direct', 'questionnaire']).optional(),
       }),
     );
-    if (b.evaluatorId !== undefined) {
+    const open = (OPEN_STATUSES as readonly string[]).includes(e.status);
+    if ((b.evaluatorId !== undefined && b.evaluatorId !== e.evaluator?.id) || (b.method !== undefined && b.method !== e.method)) {
+      if (!open) throw new HttpError(409, 'Only open evaluations can be reassigned or change method; this one has been submitted');
+    }
+    if (b.method !== undefined && b.method !== e.method) {
+      db.prepare("UPDATE evaluations SET method = ?, updated_at = datetime('now') WHERE id = ?").run(b.method, e.id);
+      logHistory(db, e.id, u.id, 'method_changed', { method: b.method });
+    }
+    if (b.evaluatorId !== undefined && b.evaluatorId !== e.evaluator?.id) {
       const ok = db.prepare("SELECT 1 FROM users WHERE id = ? AND org_id = ? AND role = 'evaluator' AND active = 1").get(b.evaluatorId, u.orgId);
       if (!ok) throw new HttpError(400, 'Choose an active evaluator from your organisation');
       const conflict = evaluatorConflict(db, e.position.id, b.evaluatorId);
@@ -185,6 +206,10 @@ export function evaluationRoutes(db: DB) {
   r.delete('/:id', admin, (req, res) => {
     const u = me(req);
     const e = load(u.orgId, idParam(req));
+    const cal = db.prepare('SELECT status, included_ids FROM calibrations WHERE position_id = ?').get(e.position.id) as { status: string; included_ids: string | null } | undefined;
+    if (cal?.status === 'approved' && (JSON.parse(cal.included_ids ?? '[]') as number[]).includes(e.id)) {
+      throw new HttpError(409, 'This evaluation is part of the job’s approved calibration; management must reopen the calibration first');
+    }
     db.prepare('DELETE FROM evaluations WHERE id = ?').run(e.id);
     res.json({ ok: true });
   });
@@ -197,11 +222,15 @@ export function evaluationRoutes(db: DB) {
     if (!['assigned', 'in_progress', 'returned'].includes(e.status)) {
       throw new HttpError(409, 'This evaluation has been submitted and can no longer be edited');
     }
+    if (jobApproval(db, e.position.id) === 'calibration') throw new HttpError(409, 'The job’s calibration has been approved; this evaluation can no longer be edited');
     return { u, e };
   };
 
   r.put('/:id/inputs', requireRole('evaluator'), (req, res) => {
     const { u, e } = ownEditable(req);
+    if (e.method === 'questionnaire') {
+      throw new HttpError(409, 'This evaluation is done with the questionnaire pack. Ask the administrator to change the method if the levels should be entered directly.');
+    }
     const b = body(
       req,
       z.object({
@@ -236,6 +265,9 @@ export function evaluationRoutes(db: DB) {
   // Evaluator saves their questionnaire; the levels are derived from it with the JH / LM responses.
   r.put('/:id/questionnaire', requireRole('evaluator'), (req, res) => {
     const { u, e } = ownEditable(req);
+    if (e.method !== 'questionnaire') {
+      throw new HttpError(409, 'This evaluation is done by entering the levels directly. Ask the administrator to change the method to use the questionnaire pack.');
+    }
     const b = body(req, z.object({ questionnaire: evQuestionnaireSchema, rationale: z.string().max(20_000).default('') }));
     const q = { ...b.questionnaire, answers: cleanAnswers(b.questionnaire.answers) };
     const { jh, lm } = submittedAnswers(listResponses(db, u.orgId, e.position.id));
@@ -254,6 +286,9 @@ export function evaluationRoutes(db: DB) {
       const { jh, lm } = submittedAnswers(listResponses(db, u.orgId, e.position.id));
       const result = consolidate(parseEvQuestionnaire(rawQuestionnaire(e.id)), jh, lm);
       if (!result.complete) throw new HttpError(400, 'Answer every questionnaire question, set the magnitude and give a rationale for any override before submitting');
+      // The line manager (and any job holder asked) must have answered first, or their ratings would be left out.
+      const waits = questionnaireWaits(db, e.position.id);
+      if (waits.length) throw new HttpError(409, `Not ready to submit. ${waits.join(' ')}`);
     }
     if (!e.inputs || !inputsComplete(e.inputs)) throw new HttpError(400, 'Complete every element before submitting');
     db.prepare(
@@ -276,6 +311,13 @@ export function evaluationRoutes(db: DB) {
     return { u, e };
   };
 
+  // Changing the levels of an approved evaluation takes it back to awaiting review: it needs approving again.
+  const withdrawApproval = (userId: number, e: EnrichedEvaluation) => {
+    if (e.status !== 'approved') return;
+    db.prepare("UPDATE evaluations SET status = 'submitted', approved_at = NULL, updated_at = datetime('now') WHERE id = ?").run(e.id);
+    logHistory(db, e.id, userId, 'approval_withdrawn');
+  };
+
   r.put('/:id/adjust', mgmt, (req, res) => {
     const { u, e } = reviewable(req);
     const b = body(req, z.object({ inputs: inputsSchema, comment: z.string().max(5000).default('') }));
@@ -283,6 +325,7 @@ export function evaluationRoutes(db: DB) {
     db.prepare(
       "UPDATE evaluations SET adjusted_inputs = ?, adjusted_by = ?, adjusted_at = datetime('now'), review_comment = ?, updated_at = datetime('now') WHERE id = ?",
     ).run(JSON.stringify(b.inputs), u.id, b.comment, e.id);
+    withdrawApproval(u.id, e);
     const after = load(u.orgId, e.id);
     logHistory(db, e.id, u.id, 'adjusted', {
       fromPoints: e.result?.totalPoints,
@@ -299,6 +342,7 @@ export function evaluationRoutes(db: DB) {
     db.prepare(
       "UPDATE evaluations SET adjusted_inputs = NULL, adjusted_by = NULL, adjusted_at = NULL, updated_at = datetime('now') WHERE id = ?",
     ).run(e.id);
+    withdrawApproval(u.id, e);
     logHistory(db, e.id, u.id, 'adjustment_cleared');
     res.json(load(u.orgId, e.id));
   });

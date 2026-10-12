@@ -19,8 +19,6 @@ export default function EvaluatePage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  // null = follow the saved evaluation, so the page never flashes the wrong mode while loading.
-  const [methodChoice, setMethod] = useState<'direct' | 'questionnaire' | null>(null);
   const [qEdit, setQDraft] = useState<EvQ | null>(null);
 
   const e = ev.data;
@@ -29,12 +27,12 @@ export default function EvaluatePage() {
       setInputs(e.inputs ?? { ...EMPTY_INPUTS });
       setRationale(e.rationale);
       setSource(e.source);
-      setMethod(null);
       setQDraft(null);
     }
   }, [e]);
 
-  const method = methodChoice ?? e?.method ?? 'direct';
+  // The administrator sets the method when assigning; the evaluator works with it.
+  const method = e?.method ?? 'direct';
   const qDraft = qEdit ?? e?.questionnaire?.ev ?? EMPTY_EV_QUESTIONNAIRE;
   const respondents = e?.questionnaire?.respondents ?? [];
   const qResult = useConsolidated(qDraft, respondents);
@@ -49,7 +47,9 @@ export default function EvaluatePage() {
     (method !== e.method ||
       rationale !== e.rationale ||
       (isQ ? JSON.stringify(qDraft) !== JSON.stringify(e.questionnaire?.ev ?? EMPTY_EV_QUESTIONNAIRE) : JSON.stringify(inputs) !== JSON.stringify(e.inputs ?? EMPTY_INPUTS)));
-  const canSubmit = isQ ? qResult.complete : inputsComplete(inputs);
+  // A questionnaire evaluation also waits for the line manager (and any job holder asked) to answer.
+  const waits = isQ ? e?.questionnaire?.waits ?? [] : [];
+  const canSubmit = isQ ? qResult.complete && waits.length === 0 : inputsComplete(inputs);
 
   const save = async (submit: boolean) => {
     if (!e) return;
@@ -132,7 +132,7 @@ export default function EvaluatePage() {
           <div className="row">
             <button disabled={busy || !dirty} onClick={() => save(false)}>Save draft</button>
             <button className="primary" disabled={busy || !canSubmit} onClick={() => save(true)}
-              title={canSubmit ? '' : isQ ? 'Rate every question, set the magnitude and justify any override' : 'Set every element'}>
+              title={canSubmit ? '' : isQ ? (waits.length ? waits.join(' ') : 'Rate every question, set the magnitude and justify any override') : 'Set every element'}>
               Submit for review
             </button>
           </div>
@@ -188,16 +188,14 @@ export default function EvaluatePage() {
                   : 'Enter the eight levels directly.'}
               </p>
             </div>
-            {editable && (
-              <div className="row" role="radiogroup" aria-label="Evaluation method">
-                <button role="radio" aria-checked={isQ} className={`choice${isQ ? ' on' : ''}`} onClick={() => setMethod('questionnaire')}>Questionnaire pack</button>
-                <button role="radio" aria-checked={!isQ} className={`choice${!isQ ? ' on' : ''}`}
-                  onClick={() => { if (isQ && qResult.complete) setInputs(qResult.inputs); setMethod('direct'); }}>
-                  Enter levels directly
-                </button>
-              </div>
-            )}
+            <span className="badge b-neutral" title="Set by the administrator">{isQ ? 'Questionnaire pack' : 'Levels entered directly'}</span>
           </div>
+          {editable && isQ && waits.length > 0 && (
+            <div className="alert warn small" style={{ margin: '12px 0 0' }}>
+              <strong>You can rate and save now, but submit only after:</strong>
+              <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{waits.map((w) => <li key={w}>{w}</li>)}</ul>
+            </div>
+          )}
         </div>
       )}
 

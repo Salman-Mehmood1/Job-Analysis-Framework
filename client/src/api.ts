@@ -279,6 +279,8 @@ export interface Respondent {
 
 export interface QuestionnaireView {
   ev: EvaluatorQuestionnaire;
+  /** What must happen before the evaluation can be submitted (line manager / job holder answers). */
+  waits: string[];
   result: QuestionnaireResult;
   respondents: Respondent[];
 }

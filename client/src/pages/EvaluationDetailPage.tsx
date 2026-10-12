@@ -20,12 +20,15 @@ const ACTION_LABEL: Record<string, string> = {
   created_from_jd_analysis: 'Created from job description analysis',
   calibrated: 'Approved through calibration',
   calibration_reopened: 'Calibration reopened',
+  method_changed: 'Method changed',
+  approval_withdrawn: 'Approval withdrawn: levels changed, awaiting approval again',
 };
 
 function historyDetail(action: string, d: Record<string, unknown>) {
   if (action === 'adjusted') return `${fmt(d.fromPoints as number)} → ${fmt(d.toPoints as number)} pts, grade ${d.fromGrade ?? '—'} → ${d.toGrade ?? '—'}${d.comment ? ` — “${d.comment}”` : ''}`;
   if (action === 'returned') return `“${d.comment}”`;
   if (action === 'submitted' && d.totalPoints) return `${fmt(d.totalPoints as number)} pts, grade ${d.grade}`;
+  if (action === 'method_changed') return d.method === 'questionnaire' ? 'Now uses the questionnaire pack' : 'Now entered directly';
   if (action === 'created_from_jd_analysis') return d.method === 'ai' ? 'AI analysis' : 'Rule-based analysis';
   return '';
 }
@@ -112,6 +115,9 @@ export default function EvaluationDetailPage() {
       </div>
       <ErrorAlert error={error} />
       {notice && <div className="alert ok">{notice}</div>}
+      {reviewable && e.status === 'approved' && (
+        <div className="alert info">This evaluation is approved. Changing its levels takes it back to awaiting review, so it needs approving again.</div>
+      )}
       {multi && (
         <div className="alert info">
           This job has {e.raterCount} evaluators. Their scores are combined and calibrated at job level.{' '}
@@ -243,6 +249,7 @@ function AdminAssignment({
   onDelete: () => void;
 }) {
   const [evaluatorId, setEvaluatorId] = useState(e.evaluator?.id ?? 0);
+  const [method, setMethod] = useState(e.method);
   const [due, setDue] = useState(e.dueDate ?? '');
   const open = ['assigned', 'in_progress', 'returned'].includes(e.status);
   return (
@@ -254,6 +261,15 @@ function AdminAssignment({
             {users.filter((u) => u.role === 'evaluator' && u.active).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
           </select>
           <button disabled={busy || !evaluatorId || evaluatorId === e.evaluator?.id} onClick={() => onChange({ evaluatorId }, 'Evaluator changed.')}>Reassign</button>
+        </div>
+      )}
+      {open && e.evaluator && (
+        <div className="row">
+          <select value={method} onChange={(x) => setMethod(x.target.value as typeof method)} style={{ flex: 1 }} aria-label="Method">
+            <option value="direct">Enter levels directly</option>
+            <option value="questionnaire">Questionnaire pack</option>
+          </select>
+          <button disabled={busy || method === e.method} onClick={() => onChange({ method }, 'Method changed. The evaluator’s earlier work in the other method is kept.')}>Change method</button>
         </div>
       )}
       <div className="row">

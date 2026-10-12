@@ -10,6 +10,7 @@ import {
   consolidate,
 } from '../shared/questionnaire';
 import type { DB } from './db';
+import { questionnaireWaits } from './workflow';
 
 export interface ResponseRow {
   id: number;
@@ -69,6 +70,8 @@ export function questionnaireView(db: DB, orgId: number, positionId: number, eva
   return {
     ev,
     result: consolidate(ev, jh, lm),
+    /** What the evaluator still waits for before submitting (respondents who have not answered). */
+    waits: questionnaireWaits(db, positionId),
     respondents: rows.map((r) => ({
       id: r.id,
       role: r.role,

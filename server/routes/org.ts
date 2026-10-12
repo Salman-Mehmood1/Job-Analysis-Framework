@@ -7,6 +7,7 @@ import { HttpError, body, idParam, me } from '../http';
 import crypto from 'node:crypto';
 import { activeUser, loadPositionPeople, respondentConflict, setPositionPeople } from '../people';
 import { loadStructures, resolveStructure } from '../structures';
+import { openEvaluationCount, openRequestCount } from '../workflow';
 
 const roleEnum = z.enum(['admin', 'evaluator', 'management', 'respondent']);
 
@@ -73,6 +74,16 @@ export function orgRoutes(db: DB) {
     );
     if (id === me(req).id && (b.active === false || (b.role && b.role !== 'admin'))) {
       throw new HttpError(400, 'You cannot deactivate or demote your own account');
+    }
+    // People with open work keep their role and access until it is reassigned or withdrawn.
+    const current = db.prepare('SELECT role, active FROM users WHERE id = ?').get(id) as { role: string; active: number };
+    const evals = openEvaluationCount(db, id);
+    if (evals && current.role === 'evaluator' && (b.active === false || (b.role && b.role !== 'evaluator'))) {
+      throw new HttpError(409, `This evaluator has ${evals} open evaluation${evals === 1 ? '' : 's'}. Reassign or delete ${evals === 1 ? 'it' : 'them'} first.`);
+    }
+    const requests = openRequestCount(db, id);
+    if (requests && b.active === false) {
+      throw new HttpError(409, `This person has ${requests} unanswered questionnaire request${requests === 1 ? '' : 's'}. Withdraw ${requests === 1 ? 'it' : 'them'} on Questionnaire requests first.`);
     }
     if (b.name) db.prepare('UPDATE users SET name = ? WHERE id = ?').run(b.name, id);
     if (b.role) db.prepare('UPDATE users SET role = ? WHERE id = ?').run(b.role, id);

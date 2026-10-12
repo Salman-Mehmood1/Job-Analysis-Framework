@@ -84,6 +84,21 @@ On first start a demo organisation is created with a worked example of every sce
 
 Bilal (`evaluator2@demo.com`) is also the line manager of the Regional Sales Manager: staff can answer a questionnaire from **My questionnaires** in their own panel.
 
+**Order of work** — the app refuses a step while an earlier step it depends on is incomplete, and says what it is waiting for:
+
+| Step | Waits for |
+|---|---|
+| Evaluator submits a questionnaire evaluation | A line manager has been asked, and every line manager / job holder asked has submitted (a pending job holder request can be withdrawn by the admin) |
+| Evaluator works on an evaluation | The method the admin assigned (questionnaire or direct); only the admin can change it, while the evaluation is open |
+| Management adjusts or approves a calibration | Every evaluator of the job has submitted (or the admin removed the outstanding evaluation) |
+| Respondents are asked, reopened or removed | No questionnaire evaluation of the job is submitted yet (management returns it first); pending requests can always be withdrawn |
+| New evaluator or JD result added to a job | The job's result is not approved (management reopens the calibration or returns the evaluation first) |
+| Evaluation reassigned or deleted | It is still open; evaluations inside an approved calibration cannot be deleted |
+| Management changes an approved evaluation's levels | Nothing, but the evaluation goes back to awaiting review and needs approving again |
+| User deactivated or taken off evaluating | Their open evaluations / unanswered questionnaire requests are reassigned or withdrawn |
+
+Grades are derived from the grade structure when read, so editing a structure's bands re-grades approved jobs too; this is intended, so grading can be tuned after evaluation.
+
 **Line managers and job holders**
 - Each position can have a default line manager and job holders (Positions page, or the `lineManagerEmail` / `jobHolderEmails` import columns, which can also create their accounts).
 - Assigning with the questionnaire method lets you pick them per position (pre-filled from the position) and asks them straight away.

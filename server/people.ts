@@ -5,6 +5,7 @@
  * evaluations independent, nobody can both evaluate a job and answer its questionnaire.
  */
 import type { DB } from './db';
+import { questionnaireLocked } from './workflow';
 
 export type PersonRole = 'JH' | 'LM';
 export const PERSON_ROLE_LABEL: Record<PersonRole, string> = { LM: 'line manager', JH: 'job holder' };
@@ -89,6 +90,10 @@ export function invitePeople(
     const skip = (reason: string) => skipped.push({ positionId, userId: p.userId, role: p.role, name: u?.name ?? `User ${p.userId}`, reason });
     if (!u) {
       skip('is not an active user');
+      continue;
+    }
+    if (questionnaireLocked(db, positionId)) {
+      skip('was not asked: a questionnaire evaluation of this job has already been submitted');
       continue;
     }
     const conflict = respondentConflict(db, positionId, p.userId);

@@ -298,7 +298,7 @@ describe('multi-evaluator calibration', () => {
     let job = (await mg.get(`/api/jobs/${posId}`)).body;
     expect(job.mode).toBe('multi');
     expect(job.status).toBe('in_progress');
-    await mg.post(`/api/jobs/${posId}/calibration/approve`).send({}).expect(400); // only 1 submitted
+    await mg.post(`/api/jobs/${posId}/calibration/approve`).send({}).expect(409); // others have not submitted yet
 
     const { id: id2 } = await rate('evaluator2@demo.com', posId, B);
     await rate('ev3@demo.com', posId, C);

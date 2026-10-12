@@ -7,6 +7,7 @@ import { HttpError, body, idParam, me } from '../http';
 import { MAX_UPLOAD_BYTES, extractJobDescription } from '../extract';
 import { MODEL, aiEnabled, analyseJobDescription, type JdAnalysis } from '../jd';
 import { logHistory } from '../services';
+import { approvedMessage, jobApproval } from '../workflow';
 import { loadStructures, resolveStructure, structureForPosition } from '../structures';
 
 export function jdRoutes(db: DB) {
@@ -145,6 +146,8 @@ export function jdRoutes(db: DB) {
           throw new HttpError(400, 'Unknown position');
         }
         positionId = b.positionId;
+        const approval = jobApproval(db, positionId);
+        if (approval) throw new HttpError(409, `Cannot add this result: ${approvedMessage(approval)}`);
       } else {
         const p = b.newPosition;
         const dept = db.prepare('SELECT company_id FROM departments WHERE id = ? AND org_id = ?').get(p.departmentId, u.orgId) as

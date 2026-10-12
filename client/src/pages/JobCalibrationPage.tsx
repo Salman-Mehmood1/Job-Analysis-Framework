@@ -71,7 +71,9 @@ export default function JobCalibrationPage() {
   const rated = j.evaluations.filter((e) => ['submitted', 'approved'].includes(e.status) && e.originalResult?.complete);
   const pending = j.evaluations.filter((e) => !rated.includes(e));
   const consensus = j.consensus;
-  const canApprove = isMgmt && !approved && rated.length >= 2 && !!draft && inputsComplete(draft);
+  // Calibration waits for every evaluator of the job to submit.
+  const outstanding = j.evaluations.filter((e) => ['assigned', 'in_progress', 'returned'].includes(e.status));
+  const canApprove = isMgmt && !approved && rated.length >= 2 && outstanding.length === 0 && !!draft && inputsComplete(draft);
   const flag = spreadFlag(j);
   const outside = rangeFlag(j, (isMgmt && !approved ? draftResult : j.result)?.totalPoints);
 
@@ -92,7 +94,7 @@ export default function JobCalibrationPage() {
           <div className="row">
             {!approved ? (
               <button className="primary" disabled={busy || !canApprove || dirty}
-                title={dirty ? 'Save or discard your changes first' : rated.length < 2 ? 'Needs at least two submitted evaluations' : ''}
+                title={dirty ? 'Save or discard your changes first' : outstanding.length ? 'Waiting for every evaluator to submit' : rated.length < 2 ? 'Needs at least two submitted evaluations' : ''}
                 onClick={() => run(() => api.post(`/jobs/${j.id}/calibration/approve`, { comment }), 'Calibration approved. This is now the job’s official result.')}>
                 Approve calibration
               </button>
@@ -107,7 +109,13 @@ export default function JobCalibrationPage() {
       </div>
       <ErrorAlert error={error} />
       {notice && <div className="alert ok">{notice}</div>}
-      {rated.length < 2 && <div className="alert info">Calibration needs at least two submitted evaluations. {rated.length} of {j.evaluationCount} submitted so far.</div>}
+      {outstanding.length > 0 && !approved && (
+        <div className="alert warn">
+          Waiting for {outstanding.map((e) => e.evaluator?.name ?? 'JD analysis').join(', ')} to submit ({rated.length} of {j.evaluationCount} submitted).
+          The levels can be adjusted and the calibration approved once every evaluator has submitted{isMgmt ? ', or the administrator removes the outstanding evaluation' : ''}.
+        </div>
+      )}
+      {rated.length < 2 && outstanding.length === 0 && <div className="alert info">Calibration needs at least two submitted evaluations.</div>}
       {approved && (
         <div className="alert ok">
           Approved by {j.calibration?.approvedBy} on {fmtDate(j.calibration?.approvedAt)} from {j.calibration?.includedIds.length} evaluations.
@@ -187,7 +195,7 @@ export default function JobCalibrationPage() {
         )}
       </div>
 
-      {isMgmt && !approved && draft && rated.length > 0 && (
+      {isMgmt && !approved && draft && rated.length > 0 && outstanding.length === 0 && (
         <div className="card">
           <div className="row spread">
             <h2>Adjust the agreed levels</h2>
