@@ -139,12 +139,12 @@ export function RespondentRequestsPanel({
               <button onClick={() => setPicked(withDefault.map((m) => m.positionId))}>Select all with a line manager</button>
               <label className="row small">Due date <input type="date" value={due} onChange={(e) => setDue(e.target.value)} /></label>
               <button className="primary" disabled={!picked.length} onClick={() => act(async () => {
-                const r = await api.post<{ invited: number; skipped: { name: string; reason: string }[] }>('/questionnaire-responses/invite-defaults', { positionIds: picked, dueDate: due || null });
+                const r = await api.post<{ invited: number; skipped: { name: string; reason: string }[] }>('/questionnaire-responses/invite-defaults', { positionIds: picked, dueDate: due || null, role: 'LM' });
                 setPicked([]);
                 if (r.skipped.length) setError(r.skipped.map((s) => `${s.name} ${s.reason}`).join('; '));
                 return r;
-              }, 'Asked the positions’ line managers and job holders.')}>
-                Ask their line managers and job holders ({picked.length})
+              }, 'Asked the positions’ line managers. Job holders can be asked separately from each evaluation if needed.')}>
+                Ask their line managers ({picked.length})
               </button>
             </div>
           )}

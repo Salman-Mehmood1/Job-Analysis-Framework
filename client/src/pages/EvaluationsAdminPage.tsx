@@ -30,6 +30,8 @@ function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: s
   // Questionnaire: who answers it per position (defaults come from the position).
   const [picks, setPicks] = useState<Record<number, PeopleChoice>>({});
   const [saveAsDefaults, setSaveAsDefaults] = useState(true);
+  // Job holders are optional: only asked for the jobs ticked here.
+  const [askJh, setAskJh] = useState<Record<number, boolean>>({});
   const [respondentDue, setRespondentDue] = useState('');
   const positionById = new Map((positions.data ?? []).map((p) => [p.id, p]));
   const pickFor = (pid: number) => picks[pid] ?? peopleOfPosition(positionById.get(pid));
@@ -50,7 +52,7 @@ function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: s
     setBusy(true);
     setError(null);
     try {
-      const respondents = method === 'questionnaire' ? selected.map((pid) => ({ positionId: pid, ...pickFor(pid) })) : undefined;
+      const respondents = method === 'questionnaire' ? selected.map((pid) => ({ positionId: pid, ...pickFor(pid), askJobHolders: !!askJh[pid] && pickFor(pid).jobHolderIds.length > 0 })) : undefined;
       const r = await api.post<AssignResult>('/evaluations', {
         positionIds: selected, evaluatorIds, dueDate: dueDate || null, instructions, method,
         respondents, saveAsDefaults, respondentDueDate: respondentDue || null,
@@ -132,7 +134,8 @@ function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: s
         <div style={{ marginTop: 16 }}>
           <h3>Who answers the questionnaire</h3>
           <p className="small muted" style={{ marginTop: 0 }}>
-            Each job’s line manager answers the questionnaire; job holders are optional. Pre-filled from the position. Anyone in the organisation can be chosen except the job’s evaluators.
+            Each job’s line manager is asked to answer the questionnaire. Job holders are optional: tick “Ask job holder” only where their input is needed (you can also ask them later).
+            Pre-filled from the position. Anyone in the organisation can be chosen except the job’s evaluators.
           </p>
           <div className="table-wrap" style={{ maxHeight: 260, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 6 }}>
             <table>
@@ -143,6 +146,13 @@ function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: s
                     <tr key={pid}>
                       <td style={{ width: 170 }}><strong>{p?.code}</strong><div className="small muted">{p?.title}</div></td>
                       <td><PeoplePicker compact users={users.data ?? []} value={pickFor(pid)} blocked={evaluatorsOf(pid)} onChange={(v) => setPicks({ ...picks, [pid]: v })} /></td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <label className="row small" style={{ flexWrap: 'nowrap', gap: 4 }} title={pickFor(pid).jobHolderIds.length ? '' : 'Add a job holder first'}>
+                          <input type="checkbox" disabled={!pickFor(pid).jobHolderIds.length} checked={!!askJh[pid] && pickFor(pid).jobHolderIds.length > 0}
+                            onChange={(x) => setAskJh({ ...askJh, [pid]: x.target.checked })} />
+                          Ask job holder
+                        </label>
+                      </td>
                     </tr>
                   );
                 })}

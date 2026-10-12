@@ -89,7 +89,15 @@ export function evaluationRoutes(db: DB) {
            * default line manager and job holders.
            */
           respondents: z
-            .array(z.object({ positionId: z.number().int(), lineManagerId: z.number().int().nullable(), jobHolderIds: z.array(z.number().int()).max(50).default([]) }))
+            .array(
+              z.object({
+                positionId: z.number().int(),
+                lineManagerId: z.number().int().nullable(),
+                jobHolderIds: z.array(z.number().int()).max(50).default([]),
+                /** Job holders are optional: they are only asked when this is set. */
+                askJobHolders: z.boolean().default(false),
+              }),
+            )
             .max(500)
             .optional(),
           /** Save the chosen line manager / job holders as the positions' defaults. */
@@ -124,10 +132,14 @@ export function evaluationRoutes(db: DB) {
           const pick = chosen.get(pid);
           if (pick) {
             if (b.saveAsDefaults) setPositionPeople(db, u.orgId, pid, pick.lineManagerId, pick.jobHolderIds);
-            people = [...(pick.lineManagerId ? [{ userId: pick.lineManagerId, role: 'LM' as const }] : []), ...pick.jobHolderIds.map((id) => ({ userId: id, role: 'JH' as const }))];
+            people = [
+              ...(pick.lineManagerId ? [{ userId: pick.lineManagerId, role: 'LM' as const }] : []),
+              ...(pick.askJobHolders ? pick.jobHolderIds.map((id) => ({ userId: id, role: 'JH' as const })) : []),
+            ];
           } else {
+            // Not chosen here: the position's line manager is asked; job holders only on request.
             const d = peopleOf(db, u.orgId, pid);
-            people = [...(d.lineManager ? [{ userId: d.lineManager.id, role: 'LM' as const }] : []), ...d.jobHolders.map((j) => ({ userId: j.id, role: 'JH' as const }))];
+            people = d.lineManager ? [{ userId: d.lineManager.id, role: 'LM' as const }] : [];
           }
         }
         const approval = jobApproval(db, pid);
@@ -183,9 +195,21 @@ export function evaluationRoutes(db: DB) {
     if ((b.evaluatorId !== undefined && b.evaluatorId !== e.evaluator?.id) || (b.method !== undefined && b.method !== e.method)) {
       if (!open) throw new HttpError(409, 'Only open evaluations can be reassigned or change method; this one has been submitted');
     }
+    let lineManager: { asked: string | null; note: string | null } | undefined;
     if (b.method !== undefined && b.method !== e.method) {
       db.prepare("UPDATE evaluations SET method = ?, updated_at = datetime('now') WHERE id = ?").run(b.method, e.id);
       logHistory(db, e.id, u.id, 'method_changed', { method: b.method });
+      // Switching to the questionnaire asks the position's line manager, as assignment does.
+      if (b.method === 'questionnaire') {
+        const hasLm = db.prepare("SELECT 1 FROM questionnaire_responses WHERE position_id = ? AND role = 'LM'").get(e.position.id);
+        const d = peopleOf(db, u.orgId, e.position.id);
+        if (hasLm) lineManager = { asked: null, note: null };
+        else if (!d.lineManager) lineManager = { asked: null, note: 'The position has no line manager set: ask one on this page or set it on Positions.' };
+        else {
+          const r = invitePeople(db, u.orgId, e.position.id, u.id, [{ userId: d.lineManager.id, role: 'LM' }], e.dueDate);
+          lineManager = r.invited.length ? { asked: d.lineManager.name, note: null } : { asked: null, note: `${d.lineManager.name} ${r.skipped[0]?.reason ?? 'was not asked'}` };
+        }
+      }
     }
     if (b.evaluatorId !== undefined && b.evaluatorId !== e.evaluator?.id) {
       const ok = db.prepare("SELECT 1 FROM users WHERE id = ? AND org_id = ? AND role = 'evaluator' AND active = 1").get(b.evaluatorId, u.orgId);
@@ -200,7 +224,7 @@ export function evaluationRoutes(db: DB) {
     }
     if (b.dueDate !== undefined) db.prepare('UPDATE evaluations SET due_date = ? WHERE id = ?').run(b.dueDate, e.id);
     if (b.instructions !== undefined) db.prepare('UPDATE evaluations SET instructions = ? WHERE id = ?').run(b.instructions, e.id);
-    res.json(load(u.orgId, e.id));
+    res.json({ ...load(u.orgId, e.id), lineManager });
   });
 
   r.delete('/:id', admin, (req, res) => {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { EMPTY_INPUTS, evaluate, inputsComplete } from '../../../shared/engine';
-import { api, type Evaluation, type EvaluationInputs, type OrgUser } from '../api';
+import { api, type Evaluation, type EvaluationInputs, type OrgUser, type Position } from '../api';
 import { EvaluationForm, ResultStrip } from '../components/EvaluationForm';
 import { EvaluatorQuestionnaire, RespondentsCard } from '../components/EvaluatorQuestionnaire';
 import { RESPONDENT_ROLE_LABEL } from '../api';
@@ -61,7 +61,7 @@ export default function EvaluationDetailPage() {
   const draftResult = useMemo(() => (draft && bands ? evaluate(draft, bands) : null), [draft, bands]);
   const dirty = draft && e && JSON.stringify(draft) !== JSON.stringify(e.adjustedInputs ?? e.inputs);
 
-  const run = async (fn: () => Promise<Evaluation | unknown>, msg: string) => {
+  const run = async (fn: () => Promise<Evaluation | unknown>, msg: string | ((r: unknown) => string)) => {
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -69,7 +69,7 @@ export default function EvaluationDetailPage() {
       const r = await fn();
       if (r && typeof r === 'object' && 'id' in r) ev.setData({ ...(r as Evaluation), history: undefined });
       ev.reload();
-      setNotice(msg);
+      setNotice(typeof msg === 'function' ? msg(r) : msg);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -205,14 +205,22 @@ export default function EvaluationDetailPage() {
             {e.instructions && <p className="small" style={{ marginTop: 8 }}><strong>Instructions:</strong> {e.instructions}</p>}
             {e.reviewComment && !reviewable && <p className="small"><strong>Review comment:</strong> {e.reviewComment}</p>}
             {user.role === 'admin' && <AdminAssignment e={e} users={users.data ?? []} busy={busy}
-              onChange={(body, msg) => run(() => api.patch(`/evaluations/${e.id}/assignment`, body), msg)}
+              onChange={(body, msg) => run(() => api.patch(`/evaluations/${e.id}/assignment`, body), (r) => {
+                const lm = (r as { lineManager?: { asked: string | null; note: string | null } }).lineManager;
+                return lm?.asked ? `${msg} ${lm.asked} has been asked to answer as line manager.` : lm?.note ? `${msg} ${lm.note}` : msg;
+              })}
               onDelete={async () => {
                 if (!confirm('Delete this evaluation and its history? The position itself is kept.')) return;
                 await api.del(`/evaluations/${e.id}`);
                 nav('/admin/evaluations');
               }} />}
           </div>
-          {user.role === 'admin' ? (
+          {user.role === 'admin' && e.method !== 'questionnaire' ? (
+            <div className="card small muted">
+              This evaluation enters the levels directly, so no line manager or job holder questionnaire is used.
+              To involve them, change the method to the questionnaire pack above: the position’s line manager is then asked automatically.
+            </div>
+          ) : user.role === 'admin' ? (
             <RespondentsAdmin positionId={e.position.id} users={users.data ?? []} blocked={e.evaluator ? [e.evaluator.id] : []} onChange={() => ev.reload()} />
           ) : e.questionnaire && e.questionnaire.respondents.length > 0 ? (
             <RespondentsCard respondents={e.questionnaire.respondents} />
@@ -283,6 +291,8 @@ function AdminAssignment({
 
 /** Admin: ask a job holder (optional) and line manager to answer the questionnaire for this job. */
 function RespondentsAdmin({ positionId, users, blocked, onChange }: { positionId: number; users: OrgUser[]; blocked: number[]; onChange: () => void }) {
+  const positions = useData<Position[]>('/positions');
+  const position = positions.data?.find((p) => p.id === positionId);
   const list = useData<{ id: number; role: 'JH' | 'LM'; status: string; userName: string; dueDate: string | null }[]>(`/questionnaire-responses?positionId=${positionId}`);
   const [userId, setUserId] = useState(0);
   const [role, setRole] = useState<'JH' | 'LM'>('LM');
@@ -304,14 +314,25 @@ function RespondentsAdmin({ positionId, users, blocked, onChange }: { positionId
   return (
     <div className="card">
       <h2>Questionnaire respondents</h2>
-      <p className="small muted">The line manager and, optionally, the job holder answer the questionnaire pack for this job. Shared by every evaluation of the job.</p>
+      <p className="small muted">
+        The line manager answers the questionnaire pack for this job; involving the job holder is optional and asked for separately. Shared by every evaluation of the job.
+      </p>
       <div className="row" style={{ marginBottom: 8 }}>
-        <button onClick={() => act(async () => {
-          const r = await api.post<{ invited: number; skipped: { name: string; reason: string }[]; noDefaults: number[] }>('/questionnaire-responses/invite-defaults', { positionIds: [positionId], dueDate: due || null });
-          if (r.noDefaults.length) throw new Error('This position has no line manager or job holders set. Set them on the Positions page, or ask someone below.');
-          const skipped = r.skipped.filter((x) => x.reason !== 'has already been asked');
-          if (skipped.length) throw new Error(skipped.map((x) => `${x.name} ${x.reason}`).join('; '));
-        })}>Ask the position’s line manager and job holders</button>
+        {(['LM', 'JH'] as const).map((role) => {
+          const names = role === 'LM' ? (position?.lineManager ? [position.lineManager.name] : []) : (position?.jobHolders ?? []).map((j) => j.name);
+          const asked = (list.data ?? []).some((r) => r.role === role && names.includes(r.userName));
+          return (
+            <button key={role} disabled={!names.length || asked}
+              title={!names.length ? `The position has no ${role === 'LM' ? 'line manager' : 'job holder'} set (Positions page); you can ask someone below.` : asked ? 'Already asked' : ''}
+              onClick={() => act(async () => {
+                const r = await api.post<{ invited: number; skipped: { name: string; reason: string }[] }>('/questionnaire-responses/invite-defaults', { positionIds: [positionId], dueDate: due || null, role });
+                const skipped = r.skipped.filter((x) => x.reason !== 'has already been asked');
+                if (skipped.length) throw new Error(skipped.map((x) => `${x.name} ${x.reason}`).join('; '));
+              })}>
+              {role === 'LM' ? `Ask the line manager${names.length ? ` (${names[0]})` : ''}` : `Also ask the job holder${names.length > 1 ? 's' : ''}${names.length ? ` (${names.join(', ')})` : ''} · optional`}
+            </button>
+          );
+        })}
       </div>
       <ErrorAlert error={error ?? list.error} />
       <table>

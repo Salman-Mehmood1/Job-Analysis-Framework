@@ -48,7 +48,7 @@ describe('line managers and job holders', () => {
         .post('/api/evaluations')
         .send({
           positionIds: [pid], evaluatorIds: [uid('evaluator2@demo.com'), sara], method: 'questionnaire',
-          respondents: [{ positionId: pid, lineManagerId: omar, jobHolderIds: [hina, sara] }], saveAsDefaults: true,
+          respondents: [{ positionId: pid, lineManagerId: omar, jobHolderIds: [hina, sara], askJobHolders: true }], saveAsDefaults: true,
         })
         .expect(201)
     ).body;
@@ -68,17 +68,44 @@ describe('line managers and job holders', () => {
     await admin.put(`/api/positions/${pos('FIN-05').id}/people`).send({ lineManagerId: sara, jobHolderIds: [] }).expect(400);
   });
 
-  it('questionnaire assignments use the position defaults when nobody is chosen', async () => {
+  it('questionnaire assignments ask the position’s line manager; job holders only when asked for', async () => {
     const { admin, uid, newPosition } = await setup();
     const pid = await newPosition('NEW-2');
     await admin.put(`/api/positions/${pid}/people`).send({ lineManagerId: uid('kamran@demo.com'), jobHolderIds: [uid('usman@demo.com')] }).expect(200);
     const r = (await admin.post('/api/evaluations').send({ positionIds: [pid], evaluatorIds: [uid('evaluator3@demo.com')], method: 'questionnaire' }).expect(201)).body;
-    expect(r.invited).toHaveLength(2);
+    expect(r.invited).toHaveLength(1);
+    let list = (await admin.get(`/api/questionnaire-responses?positionId=${pid}`)).body;
+    expect(list.map((x: { role: string }) => x.role)).toEqual(['LM']);
+    // the job holder is a separate, optional step
+    const jh = (await admin.post('/api/questionnaire-responses/invite-defaults').send({ positionIds: [pid], role: 'JH' }).expect(200)).body;
+    expect(jh.invited).toBe(1);
+    list = (await admin.get(`/api/questionnaire-responses?positionId=${pid}`)).body;
+    expect(list.map((x: { role: string }) => x.role).sort()).toEqual(['JH', 'LM']);
+    // a chosen job holder without askJobHolders is saved as default but not asked
+    const pid3 = await newPosition('NEW-4');
+    const r3 = (await admin.post('/api/evaluations').send({
+      positionIds: [pid3], evaluatorIds: [uid('evaluator3@demo.com')], method: 'questionnaire', saveAsDefaults: true,
+      respondents: [{ positionId: pid3, lineManagerId: uid('kamran@demo.com'), jobHolderIds: [uid('hina@demo.com')] }],
+    }).expect(201)).body;
+    expect(r3.invited).toHaveLength(1);
+    expect((await admin.get('/api/positions')).body.find((p: { id: number }) => p.id === pid3).jobHolders).toHaveLength(1);
     // direct assignments do not ask anyone
     const pid2 = await newPosition('NEW-3');
     await admin.put(`/api/positions/${pid2}/people`).send({ lineManagerId: uid('kamran@demo.com'), jobHolderIds: [] }).expect(200);
     const d = (await admin.post('/api/evaluations').send({ positionIds: [pid2], evaluatorIds: [uid('evaluator3@demo.com')] }).expect(201)).body;
     expect(d.invited).toHaveLength(0);
+  });
+
+  it('switching an evaluation to the questionnaire asks the position’s line manager', async () => {
+    const { admin, uid, newPosition } = await setup();
+    const pid = await newPosition('NEW-5');
+    await admin.put(`/api/positions/${pid}/people`).send({ lineManagerId: uid('farah@demo.com'), jobHolderIds: [uid('usman@demo.com')] }).expect(200);
+    const { ids } = (await admin.post('/api/evaluations').send({ positionIds: [pid], evaluatorIds: [uid('evaluator3@demo.com')] }).expect(201)).body;
+    expect((await admin.get(`/api/questionnaire-responses?positionId=${pid}`)).body).toHaveLength(0); // direct: nobody asked
+    const r = (await admin.patch(`/api/evaluations/${ids[0]}/assignment`).send({ method: 'questionnaire' }).expect(200)).body;
+    expect(r.method).toBe('questionnaire');
+    expect(r.lineManager.asked).toBe('Farah Naveed');
+    expect((await admin.get(`/api/questionnaire-responses?positionId=${pid}`)).body.map((x: { role: string }) => x.role)).toEqual(['LM']);
   });
 
   it('staff can answer as line manager from their own panel', async () => {

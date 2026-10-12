@@ -182,10 +182,17 @@ export function responseRoutes(db: DB) {
     res.status(201).json({ id: invited[0] });
   });
 
-  // Ask the position's default line manager and job holders (e.g. from the overview's "missing" list).
+  // Ask the position's default line manager, or separately its job holders (who are optional).
   r.post('/invite-defaults', admin, (req, res) => {
     const u = me(req);
-    const b = body(req, z.object({ positionIds: z.array(z.number().int()).min(1).max(2000), dueDate: z.string().max(20).nullable().optional() }));
+    const b = body(
+      req,
+      z.object({
+        positionIds: z.array(z.number().int()).min(1).max(2000),
+        dueDate: z.string().max(20).nullable().optional(),
+        role: z.enum(['LM', 'JH']).default('LM'),
+      }),
+    );
     const people = loadPositionPeople(db, u.orgId);
     const out = db.transaction(() => {
       let invited = 0;
@@ -194,11 +201,14 @@ export function responseRoutes(db: DB) {
       for (const pid of b.positionIds) {
         if (!db.prepare('SELECT 1 FROM positions WHERE id = ? AND org_id = ?').get(pid, u.orgId)) throw new HttpError(400, `Unknown position ${pid}`);
         const p = people.get(pid);
-        if (!p?.lineManager && !p?.jobHolders.length) {
+        const list =
+          b.role === 'LM'
+            ? p?.lineManager ? [{ userId: p.lineManager.id, role: 'LM' as const }] : []
+            : (p?.jobHolders ?? []).map((j) => ({ userId: j.id, role: 'JH' as const }));
+        if (!list.length) {
           noDefaults.push(pid);
           continue;
         }
-        const list = [...(p.lineManager ? [{ userId: p.lineManager.id, role: 'LM' as const }] : []), ...p.jobHolders.map((j) => ({ userId: j.id, role: 'JH' as const }))];
         const r = invitePeople(db, u.orgId, pid, u.id, list, b.dueDate ?? null);
         invited += r.invited.length;
         skipped.push(...r.skipped);

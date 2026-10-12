@@ -101,7 +101,8 @@ Grades are derived from the grade structure when read, so editing a structure's 
 
 **Line managers and job holders**
 - Each position can have a default line manager and job holders (Positions page, or the `lineManagerEmail` / `jobHolderEmails` import columns, which can also create their accounts).
-- Assigning with the questionnaire method lets you pick them per position (pre-filled from the position) and asks them straight away.
+- The method chosen at assignment decides how the evaluator works. *Questionnaire pack* asks each job's line manager straight away (picked per position, pre-filled from the position); *Enter levels directly* involves nobody. Switching an open evaluation to the questionnaire later asks the position's line manager automatically.
+- Job holders are optional and asked separately: tick *Ask job holder* for the jobs that need it when assigning, or use *Also ask the job holder* on the evaluation later.
 - Anyone in the organisation can be a line manager or job holder, but nobody can both evaluate a job and answer its questionnaire.
 - The *Questionnaire requests* tab (admin: in *Evaluations & assignments*; management: in *Review & calibration*, read-only) lists every request with status, progress and due date, flags overdue ones and jobs with no line manager asked, and lets the admin chase, re-date, reopen or remove them. Each request links to the evaluations that depend on it, and the evaluations list shows what each questionnaire evaluation is waiting on.
 
