@@ -40,7 +40,8 @@ export const DEMO_ACCOUNTS = [
   { key: 'hina', name: 'Hina Malik', email: 'hina@demo.com', role: 'respondent', note: 'job holder, Head of IT' },
   { key: 'farah', name: 'Farah Naveed', email: 'farah@demo.com', role: 'respondent', note: 'line manager of the Senior Software Developer' },
   { key: 'usman', name: 'Usman Tariq', email: 'usman@demo.com', role: 'respondent', note: 'job holder, Senior Software Developer' },
-  { key: 'tariq', name: 'Tariq Javed', email: 'tariq@demo.com', role: 'respondent', note: 'line manager of the Quality Manager' },
+  { key: 'tariq', name: 'Tariq Javed', email: 'tariq@demo.com', role: 'respondent', note: 'line manager of the Quality Manager (overdue)' },
+  { key: 'rehan', name: 'Rehan Qureshi', email: 'rehan@demo.com', role: 'respondent', note: 'line manager of the Head of Retail Operations (not asked yet)' },
 ] as const;
 
 type Who = (typeof DEMO_ACCOUNTS)[number]['key'];
@@ -246,6 +247,7 @@ interface EvalSpec {
   code: string;
   by: Rater;
   status: Status;
+  method?: 'direct' | 'questionnaire';
   lv?: Lv;
   /** Days ago the evaluation was assigned. */
   assigned: number;
@@ -291,8 +293,8 @@ const SINGLE: EvalSpec[] = [
   // started, not submitted
   { code: 'OPS-15', by: 'zainab', status: 'in_progress', lv: ['D', 'T', '2', '', '', '', '', ''], assigned: 14, due: 7 },
   // not started; one overdue
-  { code: 'SAL-06', by: 'sara', status: 'assigned', assigned: 10, due: 4, instructions: 'Compare with the Sales Executive (SAL-03) and Sales Director (SAL-10).' },
-  { code: 'RET-12', by: 'zainab', status: 'assigned', assigned: 20, due: -2 },
+  { code: 'SAL-06', by: 'sara', status: 'assigned', method: 'questionnaire', assigned: 10, due: 4, instructions: 'Compare with the Sales Executive (SAL-03) and Sales Director (SAL-10).' },
+  { code: 'RET-12', by: 'zainab', status: 'assigned', method: 'questionnaire', assigned: 20, due: -2 },
 ];
 
 /** Jobs rated independently by several evaluators and calibrated by management. */
@@ -571,7 +573,7 @@ export function seedDemo(db: DB) {
 
     // 3. Quality Manager: no job holder invited; the line manager has a draft saved (not visible to the
     //    evaluator until submitted); Zainab has rated part of the questionnaire.
-    const lmQa10 = invite('QA-10', 'tariq', 'LM', 12, 3);
+    const lmQa10 = invite('QA-10', 'tariq', 'LM', 12, -1);
     respond(lmQa10, { KH_T: [6, 6, 5, 6, 6], KH_B: [2, 2, 2, 1, 2], KH_H: [2, 3, 2, 2, 2] }, {
       purpose: 'Keep products compliant and the plant certified (ISO 9001, customer audits).',
       directReports: '2 quality engineers, 4 inspectors',
@@ -582,6 +584,23 @@ export function seedDemo(db: DB) {
       { ...EMPTY_EV_QUESTIONNAIRE, answers: answersFrom({ KH_T: [6, 6, 6, 5, 6], KH_B: [2, 2, 2, 2, 2], KH_H: [2, 2, 3, 2, 2], PS_E: [5, 5, null, null, null] }, false) },
       [], [],
     );
+
+    // 4. Who each position's questionnaire goes to by default (set on Positions or by import).
+    //    Bilal, an evaluator, is the Regional Sales Manager's line manager: staff can answer too,
+    //    and he has been asked. The Head of Retail Operations' line manager is set but not asked yet,
+    //    so the job shows on the questionnaire requests page as missing a line manager.
+    const named = (code: string, lm: Who, jobHolders: Who[] = []) => {
+      const ins = db.prepare('INSERT INTO position_people (org_id, position_id, user_id, role) VALUES (?, ?, ?, ?)');
+      ins.run(orgId, posId.get(code)!, user[lm], 'LM');
+      for (const jh of jobHolders) ins.run(orgId, posId.get(code)!, user[jh], 'JH');
+    };
+    named('IT-12', 'kamran', ['hina']);
+    named('IT-07', 'farah', ['usman']);
+    named('QA-10', 'tariq');
+    named('OPS-15', 'tariq');
+    named('SAL-06', 'bilal');
+    named('RET-12', 'rehan');
+    invite('SAL-06', 'bilal', 'LM', 9, 5);
 
     // ---------------------------------------------- job description analyses
     const saveAnalysis = (who: Who, title: string, text: string, at: number, link?: { positionId?: number; structure?: StructureKey }) => {
@@ -665,9 +684,9 @@ export function topUpDemo(db: DB) {
     invite.run(orgId, headOfIt.id, jobHolder, 'JH', admin);
   })();
   if (added.length) console.log(`Added demo accounts to your existing demo organisation: ${added.join(', ')} (password demo1234)`);
-  // Older demos lack the third evaluator or the salary bands.
+  // Older demos lack later accounts (e.g. rehan@) or the salary bands.
   if (
-    !db.prepare("SELECT 1 FROM users WHERE email = 'evaluator3@demo.com'").get() ||
+    !db.prepare("SELECT 1 FROM users WHERE email = 'rehan@demo.com'").get() ||
     !db.prepare('SELECT 1 FROM grade_structures WHERE org_id = ? AND pay IS NOT NULL').get(orgId)
   ) {
     console.log('This database holds an older, smaller demo. To rebuild it with every scenario, stop the app and run "npm run reset-demo" (this deletes everything in the database).');

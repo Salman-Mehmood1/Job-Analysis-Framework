@@ -207,7 +207,7 @@ export default function EvaluationDetailPage() {
               }} />}
           </div>
           {user.role === 'admin' ? (
-            <RespondentsAdmin positionId={e.position.id} users={users.data ?? []} onChange={() => ev.reload()} />
+            <RespondentsAdmin positionId={e.position.id} users={users.data ?? []} blocked={e.evaluator ? [e.evaluator.id] : []} onChange={() => ev.reload()} />
           ) : e.questionnaire && e.questionnaire.respondents.length > 0 ? (
             <RespondentsCard respondents={e.questionnaire.respondents} />
           ) : null}
@@ -266,13 +266,15 @@ function AdminAssignment({
 }
 
 /** Admin: ask a job holder (optional) and line manager to answer the questionnaire for this job. */
-function RespondentsAdmin({ positionId, users, onChange }: { positionId: number; users: OrgUser[]; onChange: () => void }) {
+function RespondentsAdmin({ positionId, users, blocked, onChange }: { positionId: number; users: OrgUser[]; blocked: number[]; onChange: () => void }) {
   const list = useData<{ id: number; role: 'JH' | 'LM'; status: string; userName: string; dueDate: string | null }[]>(`/questionnaire-responses?positionId=${positionId}`);
   const [userId, setUserId] = useState(0);
   const [role, setRole] = useState<'JH' | 'LM'>('LM');
   const [due, setDue] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const respondents = users.filter((u) => u.role === 'respondent' && u.active);
+  // Anyone active can answer, except the job's evaluator(s).
+  const respondents = users.filter((u) => u.active && !blocked.includes(u.id)).sort((a, b) => a.name.localeCompare(b.name));
+  const roleHint = (u: OrgUser) => (u.role === 'respondent' ? '' : ` (${u.role === 'admin' ? 'administrator' : u.role})`);
   const act = async (fn: () => Promise<unknown>) => {
     setError(null);
     try {
@@ -287,6 +289,14 @@ function RespondentsAdmin({ positionId, users, onChange }: { positionId: number;
     <div className="card">
       <h2>Questionnaire respondents</h2>
       <p className="small muted">The line manager and, optionally, the job holder answer the questionnaire pack for this job. Shared by every evaluation of the job.</p>
+      <div className="row" style={{ marginBottom: 8 }}>
+        <button onClick={() => act(async () => {
+          const r = await api.post<{ invited: number; skipped: { name: string; reason: string }[]; noDefaults: number[] }>('/questionnaire-responses/invite-defaults', { positionIds: [positionId], dueDate: due || null });
+          if (r.noDefaults.length) throw new Error('This position has no line manager or job holders set. Set them on the Positions page, or ask someone below.');
+          const skipped = r.skipped.filter((x) => x.reason !== 'has already been asked');
+          if (skipped.length) throw new Error(skipped.map((x) => `${x.name} ${x.reason}`).join('; '));
+        })}>Ask the position’s line manager and job holders</button>
+      </div>
       <ErrorAlert error={error ?? list.error} />
       <table>
         <tbody>
@@ -313,7 +323,7 @@ function RespondentsAdmin({ positionId, users, onChange }: { positionId: number;
             </select>
             <select value={userId} onChange={(e) => setUserId(Number(e.target.value))} style={{ flex: 1 }}>
               <option value={0}>Choose person…</option>
-              {respondents.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              {respondents.map((u) => <option key={u.id} value={u.id}>{u.name}{roleHint(u)}</option>)}
             </select>
           </div>
           <div className="row">

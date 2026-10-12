@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { STAFF, requireRole } from '../auth';
 import type { DB } from '../db';
 import { HttpError, body, idParam, me } from '../http';
+import crypto from 'node:crypto';
+import { activeUser, loadPositionPeople, respondentConflict, setPositionPeople } from '../people';
 import { loadStructures, resolveStructure } from '../structures';
 
 const roleEnum = z.enum(['admin', 'evaluator', 'management', 'respondent']);
@@ -182,6 +184,7 @@ export function orgRoutes(db: DB) {
 
   r.get('/positions', requireRole('admin', 'management'), (req, res) => {
     const structures = loadStructures(db, me(req).orgId);
+    const people = loadPositionPeople(db, me(req).orgId);
     res.json(
       db
         .prepare(
@@ -196,7 +199,14 @@ export function orgRoutes(db: DB) {
         .map((p) => {
           const row = p as { gradeStructureId: number | null; companyId: number };
           const { structure, source } = resolveStructure(structures, row.gradeStructureId, row.companyId);
-          return { ...row, gradeStructure: { id: structure.id, name: structure.name, source } };
+          const pp = people.get((p as { id: number }).id);
+          return {
+            ...row,
+            gradeStructure: { id: structure.id, name: structure.name, source },
+            /** Who the position's questionnaire goes to by default. */
+            lineManager: pp?.lineManager ?? null,
+            jobHolders: pp?.jobHolders ?? [],
+          };
         }),
     );
   });
@@ -239,6 +249,12 @@ export function orgRoutes(db: DB) {
           jobFamily: z.string().trim().max(120).default(''),
           jobDescription: z.string().max(50_000).default(''),
           gradeStructure: z.string().trim().max(80).default(''),
+          /** Line manager by email; with a name, a missing account is created (job holder / line manager role). */
+          lineManagerEmail: z.string().trim().max(200).default(''),
+          lineManagerName: z.string().trim().max(120).default(''),
+          /** Job holders: emails and names separated by ";" in the same order. */
+          jobHolderEmails: z.string().trim().max(5000).default(''),
+          jobHolderNames: z.string().trim().max(5000).default(''),
         }),
       ).max(2000),
     );
@@ -248,24 +264,57 @@ export function orgRoutes(db: DB) {
     );
     const unknown = [...new Set(rows.map((r) => r.gradeStructure).filter((n) => n && !structureIds.has(n.toLowerCase())))];
     if (unknown.length) throw new HttpError(400, `Unknown grade structure: ${unknown.join(', ')}. Create it first or leave the column blank.`);
+    const split = (v: string) => v.split(';').map((x) => x.trim());
+    const createdUsers: { name: string; email: string; password: string }[] = [];
+    // Finds a user by email, or creates a job holder / line manager account when a name is given.
+    const person = (email: string, name: string, line: string): number => {
+      const found = db.prepare('SELECT id, org_id FROM users WHERE email = ?').get(email) as { id: number; org_id: number } | undefined;
+      if (found) {
+        if (found.org_id !== orgId) throw new HttpError(400, `${line}: ${email} belongs to another organisation`);
+        return found.id;
+      }
+      if (!name) throw new HttpError(400, `${line}: no user with email ${email}. Add the name column so an account can be created, or create the user first.`);
+      if (!z.email().safeParse(email).success) throw new HttpError(400, `${line}: ${email} is not a valid email`);
+      const password = crypto.randomBytes(6).toString('base64url');
+      createdUsers.push({ name, email, password });
+      return Number(
+        db.prepare("INSERT INTO users (org_id, name, email, password_hash, role) VALUES (?, ?, ?, ?, 'respondent')").run(orgId, name, email, bcrypt.hashSync(password, 10)).lastInsertRowid,
+      );
+    };
     const result = db.transaction(() => {
       let created = 0;
+      let peopleSet = 0;
       const skipped: string[] = [];
+      const applyPeople = (positionId: number, row: (typeof rows)[number]) => {
+        if (!row.lineManagerEmail && !row.jobHolderEmails) return;
+        const line = `Row ${row.code}`;
+        const lm = row.lineManagerEmail ? person(row.lineManagerEmail, row.lineManagerName, line) : null;
+        const names = split(row.jobHolderNames);
+        const jhs = row.jobHolderEmails ? split(row.jobHolderEmails).filter(Boolean).map((e, i) => person(e, names[i] ?? '', line)) : [];
+        const problem = peopleProblem(orgId, positionId, lm, jhs);
+        if (problem) throw new HttpError(400, `${line}: ${problem}`);
+        setPositionPeople(db, orgId, positionId, lm, jhs);
+        peopleSet++;
+      };
       for (const row of rows) {
         let c = db.prepare('SELECT id FROM companies WHERE org_id = ? AND name = ?').get(orgId, row.company) as { id: number } | undefined;
         if (!c) c = { id: Number(db.prepare('INSERT INTO companies (org_id, name) VALUES (?, ?)').run(orgId, row.company).lastInsertRowid) };
         let d = db.prepare('SELECT id FROM departments WHERE company_id = ? AND name = ?').get(c.id, row.department) as { id: number } | undefined;
         if (!d) d = { id: Number(db.prepare('INSERT INTO departments (org_id, company_id, name) VALUES (?, ?, ?)').run(orgId, c.id, row.department).lastInsertRowid) };
-        if (db.prepare('SELECT 1 FROM positions WHERE org_id = ? AND code = ?').get(orgId, row.code)) {
+        const existing = db.prepare('SELECT id FROM positions WHERE org_id = ? AND code = ?').get(orgId, row.code) as { id: number } | undefined;
+        if (existing) {
+          // Existing positions are not changed, except for their line manager / job holders when given.
+          applyPeople(existing.id, row);
           skipped.push(row.code);
           continue;
         }
-        db.prepare(
+        const info = db.prepare(
           'INSERT INTO positions (org_id, company_id, department_id, code, title, job_family, job_description, grade_structure_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         ).run(orgId, c.id, d.id, row.code, row.title, row.jobFamily, row.jobDescription, row.gradeStructure ? structureIds.get(row.gradeStructure.toLowerCase())! : null);
+        applyPeople(Number(info.lastInsertRowid), row);
         created++;
       }
-      return { created, skipped };
+      return { created, skipped, peopleSet, createdUsers };
     })();
     res.json(result);
   });
@@ -286,6 +335,30 @@ export function orgRoutes(db: DB) {
       throw new HttpError(409, `Position code ${b.code} already exists`);
     }
     res.json({ ok: true });
+  });
+
+  /** Checks a line manager / job holder choice for a position; returns the problem, or null. */
+  const peopleProblem = (orgId: number, positionId: number, lineManagerId: number | null, jobHolderIds: number[]) => {
+    for (const id of [lineManagerId, ...jobHolderIds].filter((v): v is number => !!v)) {
+      const user = activeUser(db, orgId, id);
+      if (!user) return 'Choose active users from your organisation';
+      const conflict = respondentConflict(db, positionId, id);
+      if (conflict) return `${user.name} ${conflict}`;
+    }
+    if (lineManagerId && jobHolderIds.includes(lineManagerId)) return 'The line manager cannot also be a job holder of the same position';
+    return null;
+  };
+
+  // Default line manager and job holders of a position (used when a questionnaire evaluation is assigned).
+  r.put('/positions/:id/people', admin, (req, res) => {
+    const id = idParam(req);
+    const orgId = me(req).orgId;
+    owned('positions', id, orgId);
+    const b = body(req, z.object({ lineManagerId: z.number().int().nullable(), jobHolderIds: z.array(z.number().int()).max(50).default([]) }));
+    const problem = peopleProblem(orgId, id, b.lineManagerId, b.jobHolderIds);
+    if (problem) throw new HttpError(400, problem);
+    db.transaction(() => setPositionPeople(db, orgId, id, b.lineManagerId, b.jobHolderIds))();
+    res.json(loadPositionPeople(db, orgId).get(id) ?? { lineManager: null, jobHolders: [] });
   });
 
   r.delete('/positions/:id', admin, (req, res) => {

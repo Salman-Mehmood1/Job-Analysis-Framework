@@ -160,6 +160,36 @@ export interface Position {
   evaluations: number;
   gradeStructureId: number | null;
   gradeStructure: StructureRef;
+  /** Default line manager and job holders: who the position's questionnaire goes to. */
+  lineManager: { id: number; name: string } | null;
+  jobHolders: { id: number; name: string }[];
+}
+
+/** One questionnaire request, as listed on the admin overview. */
+export interface RespondentRequest {
+  id: number;
+  positionId: number;
+  positionCode: string;
+  positionTitle: string;
+  companyName: string;
+  departmentName: string;
+  role: 'JH' | 'LM';
+  status: 'invited' | 'in_progress' | 'submitted';
+  dueDate: string | null;
+  invitedAt: string;
+  updatedAt: string;
+  submittedAt: string | null;
+  userId: number;
+  userName: string;
+  userEmail: string;
+  userRole: Role;
+  answered: number;
+  questionnaireEvaluations: number;
+}
+export interface RespondentOverview {
+  requests: RespondentRequest[];
+  /** Questionnaire jobs still open with no line manager asked. */
+  missing: { positionId: number; positionCode: string; positionTitle: string; companyName: string; departmentName: string; evaluations: number; defaultLineManager: { id: number; name: string } | null }[];
 }
 
 export interface JdAnalysis {

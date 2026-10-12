@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { JOB_INFO_FIELDS, type JobInfo, QUESTIONNAIRE, RESPONDENT_QUESTIONS } from '../../../shared/questionnaire';
 import { type MyQuestionnaire, RESPONDENT_ROLE_LABEL, api } from '../api';
 import { QuestionBlock } from '../components/QuestionBlock';
@@ -11,8 +11,18 @@ const STATUS_TEXT = { invited: 'Not started', in_progress: 'In progress', submit
 const STATUS_CLASS = { invited: 'b-assigned', in_progress: 'b-in_progress', submitted: 'b-approved' } as const;
 const TOTAL = RESPONDENT_QUESTIONS.length;
 
+/** Respondents use /respondent; staff answering as line manager or job holder use /<panel>/questionnaires. */
+function usePaths() {
+  const panel = useLocation().pathname.split('/')[1] || 'respondent';
+  return {
+    list: panel === 'respondent' ? '/respondent' : `/${panel}/questionnaires`,
+    item: (id: number) => `/${panel}/questionnaires/${id}`,
+  };
+}
+
 export function MyQuestionnairesPage() {
   const nav = useNavigate();
+  const paths = usePaths();
   const { data, error, loading } = useData<MyQuestionnaire[]>('/questionnaire-responses/mine');
   return (
     <div>
@@ -28,7 +38,7 @@ export function MyQuestionnairesPage() {
       <ErrorAlert error={error} />
       <div className="grid grid-2">
         {(data ?? []).map((q) => (
-          <div className="card clickable" key={q.id} style={{ cursor: 'pointer' }} onClick={() => nav(`/respondent/questionnaires/${q.id}`)}>
+          <div className="card clickable" key={q.id} style={{ cursor: 'pointer' }} onClick={() => nav(paths.item(q.id))}>
             <div className="row spread">
               <h2 style={{ margin: 0 }}>{q.position.code} · {q.position.title}</h2>
               <span className={`badge ${STATUS_CLASS[q.status]}`}>{STATUS_TEXT[q.status]}</span>
@@ -51,6 +61,7 @@ type Section = 'info' | (typeof QUESTIONNAIRE)[number]['id'] | 'complex' | 'revi
 
 export function RespondQuestionnairePage() {
   const { id } = useParams();
+  const paths = usePaths();
   const q = useData<MyQuestionnaire>(`/questionnaire-responses/mine/${id}`);
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [jobInfo, setJobInfo] = useState<JobInfo>({});
@@ -128,7 +139,7 @@ export function RespondQuestionnairePage() {
     <div>
       <div className="page-head">
         <div>
-          <div className="small"><Link to="/respondent">← My questionnaires</Link></div>
+          <div className="small"><Link to={paths.list}>← My questionnaires</Link></div>
           <h1>{d.position.code} · {d.position.title}</h1>
           <div className="row">
             <span className={`badge ${STATUS_CLASS[d.status]}`}>{STATUS_TEXT[d.status]}</span>

@@ -1,11 +1,19 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, type Evaluation, type OrgUser, type Position } from '../api';
+import { type PeopleChoice, PeoplePicker, peopleOfPosition } from '../components/PeoplePicker';
 import { type Filters, SlicerBar, applyFilters } from '../components/Slicers';
 import { ErrorAlert, Modal, StatusBadge, fmt, fmtDate } from '../components/ui';
 import { useData } from '../hooks';
 
-function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (n: number, skipped: number) => void }) {
+interface AssignResult {
+  ids: number[];
+  skipped: { positionId: number; evaluatorId: number; reason: string }[];
+  invited: number[];
+  inviteSkipped: { positionId: number; name: string; role: 'JH' | 'LM'; reason: string }[];
+}
+
+function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: string, warnings: string[]) => void }) {
   const positions = useData<Position[]>('/positions');
   const users = useData<OrgUser[]>('/users');
   const evals = useData<Evaluation[]>('/evaluations');
@@ -18,6 +26,14 @@ function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (n: num
   const [onlyUnassigned, setOnlyUnassigned] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Questionnaire: who answers it per position (defaults come from the position).
+  const [picks, setPicks] = useState<Record<number, PeopleChoice>>({});
+  const [saveAsDefaults, setSaveAsDefaults] = useState(true);
+  const [respondentDue, setRespondentDue] = useState('');
+  const positionById = new Map((positions.data ?? []).map((p) => [p.id, p]));
+  const pickFor = (pid: number) => picks[pid] ?? peopleOfPosition(positionById.get(pid));
+  const evaluatorsOf = (pid: number) => [...evaluatorIds, ...(evals.data ?? []).filter((e) => e.position.id === pid && e.evaluator).map((e) => e.evaluator!.id)];
+  const noLineManager = selected.filter((pid) => !pickFor(pid).lineManagerId);
 
   const evaluators = (users.data ?? []).filter((u) => u.role === 'evaluator' && u.active);
   const covered = new Set((evals.data ?? []).map((e) => e.position.id));
@@ -33,8 +49,21 @@ function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (n: num
     setBusy(true);
     setError(null);
     try {
-      const r = await api.post<{ ids: number[]; skipped: unknown[] }>('/evaluations', { positionIds: selected, evaluatorIds, dueDate: dueDate || null, instructions, method });
-      onDone(r.ids.length, r.skipped.length);
+      const respondents = method === 'questionnaire' ? selected.map((pid) => ({ positionId: pid, ...pickFor(pid) })) : undefined;
+      const r = await api.post<AssignResult>('/evaluations', {
+        positionIds: selected, evaluatorIds, dueDate: dueDate || null, instructions, method,
+        respondents, saveAsDefaults, respondentDueDate: respondentDue || null,
+      });
+      const code = (pid: number) => positionById.get(pid)?.code ?? pid;
+      const evName = (id: number) => evaluators.find((u) => u.id === id)?.name ?? id;
+      const n = r.ids.length;
+      onDone(
+        `Assigned ${n} evaluation${n === 1 ? '' : 's'}.${r.invited.length ? ` Asked ${r.invited.length} line manager / job holder response${r.invited.length === 1 ? '' : 's'}.` : ''}`,
+        [
+          ...r.skipped.map((x) => `${code(x.positionId)}: ${evName(x.evaluatorId)} ${x.reason} (not assigned).`),
+          ...r.inviteSkipped.map((x) => `${code(x.positionId)}: ${x.name} ${x.reason} (not asked as ${x.role === 'LM' ? 'line manager' : 'job holder'}).`),
+        ],
+      );
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -43,7 +72,7 @@ function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (n: num
   };
 
   return (
-    <Modal title="Assign evaluations" onClose={onClose}>
+    <Modal title="Assign evaluations" onClose={onClose} wide>
       <ErrorAlert error={error ?? positions.error ?? users.error} />
       <div className="field small">Evaluators</div>
       <div className="row" style={{ gap: 4, marginTop: 4 }}>
@@ -98,6 +127,40 @@ function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (n: num
           </tbody>
         </table>
       </div>
+      {method === 'questionnaire' && selected.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <h3>Who answers the questionnaire</h3>
+          <p className="small muted" style={{ marginTop: 0 }}>
+            Each job’s line manager answers the questionnaire; job holders are optional. Pre-filled from the position. Anyone in the organisation can be chosen except the job’s evaluators.
+          </p>
+          <div className="table-wrap" style={{ maxHeight: 260, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 6 }}>
+            <table>
+              <tbody>
+                {selected.map((pid) => {
+                  const p = positionById.get(pid);
+                  return (
+                    <tr key={pid}>
+                      <td style={{ width: 170 }}><strong>{p?.code}</strong><div className="small muted">{p?.title}</div></td>
+                      <td><PeoplePicker compact users={users.data ?? []} value={pickFor(pid)} blocked={evaluatorsOf(pid)} onChange={(v) => setPicks({ ...picks, [pid]: v })} /></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="row" style={{ marginTop: 8 }}>
+            <label className="row small"><input type="checkbox" checked={saveAsDefaults} onChange={(e) => setSaveAsDefaults(e.target.checked)} /> Save as each position’s line manager / job holders</label>
+            <label className="row small" style={{ marginLeft: 'auto' }}>Their due date
+              <input type="date" value={respondentDue} onChange={(e) => setRespondentDue(e.target.value)} />
+            </label>
+          </div>
+          {noLineManager.length > 0 && (
+            <div className="alert warn small" style={{ marginTop: 8, marginBottom: 0 }}>
+              No line manager for {noLineManager.map((pid) => positionById.get(pid)?.code).join(', ')}. You can ask one later from the evaluation or the questionnaire requests page.
+            </div>
+          )}
+        </div>
+      )}
       <div className="row spread" style={{ marginTop: 16 }}>
         <span className="muted small">{selected.length} job{selected.length === 1 ? '' : 's'} × {evaluatorIds.length} evaluator{evaluatorIds.length === 1 ? '' : 's'}</span>
         <button className="primary" disabled={busy || !evaluatorIds.length || !selected.length} onClick={submit}>
@@ -114,6 +177,7 @@ export default function EvaluationsAdminPage() {
   const [filters, setFilters] = useState<Filters>({});
   const [assigning, setAssigning] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const rows = useMemo(() => applyFilters(evals.data ?? [], filters), [evals.data, filters]);
   const today = new Date().toISOString().slice(0, 10);
 
@@ -127,6 +191,7 @@ export default function EvaluationsAdminPage() {
         <button className="primary" onClick={() => setAssigning(true)}>+ Assign evaluations</button>
       </div>
       {notice && <div className="alert ok">{notice}</div>}
+      {warnings.length > 0 && <div className="alert warn">{warnings.map((w) => <div key={w}>{w}</div>)}</div>}
       <ErrorAlert error={evals.error} />
       <SlicerBar rows={evals.data ?? []} filters={filters} onChange={setFilters} dims={['status', 'evaluator', 'company', 'department', 'grade']} />
       <div className="card table-wrap">
@@ -164,9 +229,10 @@ export default function EvaluationsAdminPage() {
       {assigning && (
         <AssignModal
           onClose={() => setAssigning(false)}
-          onDone={(n, skipped) => {
+          onDone={(msg, w) => {
             setAssigning(false);
-            setNotice(`Assigned ${n} evaluation${n === 1 ? '' : 's'}.${skipped ? ` Skipped ${skipped} that the evaluator already had.` : ''}`);
+            setNotice(msg);
+            setWarnings(w);
             evals.reload();
           }}
         />

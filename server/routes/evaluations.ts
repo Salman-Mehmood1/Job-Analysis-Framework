@@ -8,6 +8,7 @@ import { HttpError, body, idParam, me } from '../http';
 import { approvedCalibration, isMultiRater } from '../jobs';
 import { cleanAnswers, consolidate } from '../../shared/questionnaire';
 import { listResponses, parseEvQuestionnaire, questionnaireView, submittedAnswers } from '../questionnaire';
+import { type InviteSkip, activeUser, evaluatorConflict, invitePeople, peopleOf, setPositionPeople } from '../people';
 import { type EnrichedEvaluation, getEvaluation, getHistory, listEvaluations, logHistory } from '../services';
 
 
@@ -77,6 +78,17 @@ export function evaluationRoutes(db: DB) {
           instructions: z.string().max(5000).default(''),
           /** 'questionnaire' = levels come from the questionnaire pack (job holder optional). */
           method: z.enum(['direct', 'questionnaire']).default('direct'),
+          /**
+           * Questionnaire only: who answers it, per position. Positions left out use their
+           * default line manager and job holders.
+           */
+          respondents: z
+            .array(z.object({ positionId: z.number().int(), lineManagerId: z.number().int().nullable(), jobHolderIds: z.array(z.number().int()).max(50).default([]) }))
+            .max(500)
+            .optional(),
+          /** Save the chosen line manager / job holders as the positions' defaults. */
+          saveAsDefaults: z.boolean().default(false),
+          respondentDueDate: z.string().max(20).nullable().optional(),
         })
         .refine((x) => x.evaluatorIds?.length || x.evaluatorId, 'Choose at least one evaluator'),
     );
@@ -85,16 +97,41 @@ export function evaluationRoutes(db: DB) {
       const ev = db.prepare("SELECT id FROM users WHERE id = ? AND org_id = ? AND role = 'evaluator' AND active = 1").get(id, u.orgId);
       if (!ev) throw new HttpError(400, 'Choose active evaluators from your organisation');
     }
+    const chosen = new Map((b.respondents ?? []).map((x) => [x.positionId, x]));
+    for (const x of chosen.values()) {
+      for (const id of [x.lineManagerId, ...x.jobHolderIds].filter((v): v is number => !!v)) {
+        if (!activeUser(db, u.orgId, id)) throw new HttpError(400, 'Choose active users as line managers and job holders');
+      }
+    }
     const out = db.transaction(() => {
       const ids: number[] = [];
-      const skipped: { positionId: number; evaluatorId: number }[] = [];
+      const skipped: { positionId: number; evaluatorId: number; reason: string }[] = [];
+      const invited: number[] = [];
+      const inviteSkipped: InviteSkip[] = [];
       for (const pid of b.positionIds) {
         if (!db.prepare('SELECT 1 FROM positions WHERE id = ? AND org_id = ?').get(pid, u.orgId)) {
           throw new HttpError(400, `Unknown position ${pid}`);
         }
+        // Line manager / job holders: as chosen for this assignment, else the position's defaults.
+        let people: { userId: number; role: 'LM' | 'JH' }[] = [];
+        if (b.method === 'questionnaire') {
+          const pick = chosen.get(pid);
+          if (pick) {
+            if (b.saveAsDefaults) setPositionPeople(db, u.orgId, pid, pick.lineManagerId, pick.jobHolderIds);
+            people = [...(pick.lineManagerId ? [{ userId: pick.lineManagerId, role: 'LM' as const }] : []), ...pick.jobHolderIds.map((id) => ({ userId: id, role: 'JH' as const }))];
+          } else {
+            const d = peopleOf(db, u.orgId, pid);
+            people = [...(d.lineManager ? [{ userId: d.lineManager.id, role: 'LM' as const }] : []), ...d.jobHolders.map((j) => ({ userId: j.id, role: 'JH' as const }))];
+          }
+        }
         for (const evaluatorId of evaluatorIds) {
           if (db.prepare('SELECT 1 FROM evaluations WHERE position_id = ? AND evaluator_id = ?').get(pid, evaluatorId)) {
-            skipped.push({ positionId: pid, evaluatorId });
+            skipped.push({ positionId: pid, evaluatorId, reason: 'already evaluates this job' });
+            continue;
+          }
+          const conflict = evaluatorConflict(db, pid, evaluatorId) ?? (people.some((p) => p.userId === evaluatorId) ? 'is chosen to answer this job’s questionnaire, so cannot also evaluate it' : null);
+          if (conflict) {
+            skipped.push({ positionId: pid, evaluatorId, reason: conflict });
             continue;
           }
           const id = Number(
@@ -107,8 +144,13 @@ export function evaluationRoutes(db: DB) {
           logHistory(db, id, u.id, 'assigned', { evaluatorId });
           ids.push(id);
         }
+        if (people.length && db.prepare("SELECT 1 FROM evaluations WHERE position_id = ? AND method = 'questionnaire'").get(pid)) {
+          const r = invitePeople(db, u.orgId, pid, u.id, people, b.respondentDueDate ?? b.dueDate ?? null);
+          invited.push(...r.invited);
+          inviteSkipped.push(...r.skipped.filter((x) => x.reason !== 'has already been asked'));
+        }
       }
-      return { ids, skipped };
+      return { ids, skipped, invited, inviteSkipped };
     })();
     res.status(201).json(out);
   });
@@ -127,6 +169,8 @@ export function evaluationRoutes(db: DB) {
     if (b.evaluatorId !== undefined) {
       const ok = db.prepare("SELECT 1 FROM users WHERE id = ? AND org_id = ? AND role = 'evaluator' AND active = 1").get(b.evaluatorId, u.orgId);
       if (!ok) throw new HttpError(400, 'Choose an active evaluator from your organisation');
+      const conflict = evaluatorConflict(db, e.position.id, b.evaluatorId);
+      if (conflict) throw new HttpError(400, `That evaluator ${conflict}`);
       if (db.prepare('SELECT 1 FROM evaluations WHERE position_id = ? AND evaluator_id = ? AND id <> ?').get(e.position.id, b.evaluatorId, e.id)) {
         throw new HttpError(409, 'That evaluator already has an evaluation for this job');
       }

@@ -4,6 +4,7 @@ import { JOB_INFO_FIELDS, cleanAnswers } from '../../shared/questionnaire';
 import { requireRole } from '../auth';
 import type { DB } from '../db';
 import { HttpError, body, idParam, me } from '../http';
+import { invitePeople, loadPositionPeople } from '../people';
 import { refreshQuestionnaireEvaluations } from '../questionnaire';
 
 /**
@@ -12,7 +13,8 @@ import { refreshQuestionnaireEvaluations } from '../questionnaire';
  */
 export function responseRoutes(db: DB) {
   const r = Router();
-  const respondent = requireRole('respondent');
+  // Anyone signed in can answer the questionnaires they were asked to (staff can be line managers too).
+  const respondent = requireRole();
   const admin = requireRole('admin');
 
   const jobInfoSchema = z.object(Object.fromEntries(JOB_INFO_FIELDS.map((f) => [f.key, z.string().max(5000).optional()]))).partial();
@@ -119,31 +121,97 @@ export function responseRoutes(db: DB) {
     res.json(rows);
   });
 
-  r.post('/', admin, (req, res) => {
-    const u = me(req);
-    const b = body(req, z.object({ positionId: z.number().int(), userId: z.number().int(), role: z.enum(['JH', 'LM']), dueDate: z.string().max(20).nullable().optional() }));
-    if (!db.prepare('SELECT 1 FROM positions WHERE id = ? AND org_id = ?').get(b.positionId, u.orgId)) throw new HttpError(400, 'Unknown position');
-    if (!db.prepare("SELECT 1 FROM users WHERE id = ? AND org_id = ? AND role = 'respondent' AND active = 1").get(b.userId, u.orgId)) {
-      throw new HttpError(400, 'Choose an active job holder / line manager user');
-    }
-    try {
-      const id = Number(
-        db
-          .prepare('INSERT INTO questionnaire_responses (org_id, position_id, user_id, role, due_date, invited_by) VALUES (?, ?, ?, ?, ?, ?)')
-          .run(u.orgId, b.positionId, b.userId, b.role, b.dueDate ?? null, u.id).lastInsertRowid,
-      );
-      res.status(201).json({ id });
-    } catch {
-      throw new HttpError(409, 'That person is already asked for this job in that role');
-    }
-  });
-
   const adminOwned = (req: Parameters<typeof me>[0]) => {
     const u = me(req);
     const row = db.prepare('SELECT * FROM questionnaire_responses WHERE id = ? AND org_id = ?').get(idParam(req), u.orgId) as Row | undefined;
     if (!row) throw new HttpError(404, 'Not found');
     return { u, row };
   };
+
+  /**
+   * Every questionnaire request in the organisation, plus questionnaire jobs that have no line
+   * manager asked yet (with the position's default line manager, if one is set).
+   */
+  r.get('/overview', requireRole('admin', 'management'), (req, res) => {
+    const u = me(req);
+    const requests = db
+      .prepare(
+        `SELECT r.id, r.position_id AS positionId, r.role, r.status, r.due_date AS dueDate, r.created_at AS invitedAt,
+                r.updated_at AS updatedAt, r.submitted_at AS submittedAt,
+                u.id AS userId, u.name AS userName, u.email AS userEmail, u.role AS userRole,
+                p.code AS positionCode, p.title AS positionTitle, c.name AS companyName, d.name AS departmentName,
+                (SELECT COUNT(*) FROM evaluations e WHERE e.position_id = r.position_id AND e.method = 'questionnaire') AS questionnaireEvaluations
+         FROM questionnaire_responses r JOIN users u ON u.id = r.user_id JOIN positions p ON p.id = r.position_id
+         JOIN companies c ON c.id = p.company_id JOIN departments d ON d.id = p.department_id
+         WHERE r.org_id = ? ORDER BY p.code, r.role DESC, u.name`,
+      )
+      .all(u.orgId) as { answers?: string }[];
+    const answered = new Map(
+      (db.prepare('SELECT id, answers FROM questionnaire_responses WHERE org_id = ?').all(u.orgId) as { id: number; answers: string }[]).map((x) => [
+        x.id,
+        Object.keys(JSON.parse(x.answers)).length,
+      ]),
+    );
+    const people = loadPositionPeople(db, u.orgId);
+    const missing = (
+      db
+        .prepare(
+          `SELECT p.id AS positionId, p.code AS positionCode, p.title AS positionTitle, c.name AS companyName, d.name AS departmentName,
+                  COUNT(e.id) AS evaluations
+           FROM positions p JOIN companies c ON c.id = p.company_id JOIN departments d ON d.id = p.department_id
+           JOIN evaluations e ON e.position_id = p.id AND e.method = 'questionnaire' AND e.status IN ('assigned','in_progress','returned')
+           WHERE p.org_id = ? AND NOT EXISTS (SELECT 1 FROM questionnaire_responses r WHERE r.position_id = p.id AND r.role = 'LM')
+           GROUP BY p.id ORDER BY p.code`,
+        )
+        .all(u.orgId) as { positionId: number }[]
+    ).map((m) => ({ ...m, defaultLineManager: people.get(m.positionId)?.lineManager ?? null }));
+    res.json({ requests: requests.map((x) => ({ ...x, answered: answered.get((x as unknown as { id: number }).id) ?? 0 })), missing });
+  });
+
+  r.post('/', admin, (req, res) => {
+    const u = me(req);
+    const b = body(req, z.object({ positionId: z.number().int(), userId: z.number().int(), role: z.enum(['JH', 'LM']), dueDate: z.string().max(20).nullable().optional() }));
+    if (!db.prepare('SELECT 1 FROM positions WHERE id = ? AND org_id = ?').get(b.positionId, u.orgId)) throw new HttpError(400, 'Unknown position');
+    const { invited, skipped } = db.transaction(() => invitePeople(db, u.orgId, b.positionId, u.id, [{ userId: b.userId, role: b.role }], b.dueDate ?? null))();
+    if (!invited.length) {
+      const s = skipped[0];
+      throw new HttpError(s.reason === 'has already been asked' ? 409 : 400, `${s.name} ${s.reason}`);
+    }
+    res.status(201).json({ id: invited[0] });
+  });
+
+  // Ask the position's default line manager and job holders (e.g. from the overview's "missing" list).
+  r.post('/invite-defaults', admin, (req, res) => {
+    const u = me(req);
+    const b = body(req, z.object({ positionIds: z.array(z.number().int()).min(1).max(2000), dueDate: z.string().max(20).nullable().optional() }));
+    const people = loadPositionPeople(db, u.orgId);
+    const out = db.transaction(() => {
+      let invited = 0;
+      const skipped: unknown[] = [];
+      const noDefaults: number[] = [];
+      for (const pid of b.positionIds) {
+        if (!db.prepare('SELECT 1 FROM positions WHERE id = ? AND org_id = ?').get(pid, u.orgId)) throw new HttpError(400, `Unknown position ${pid}`);
+        const p = people.get(pid);
+        if (!p?.lineManager && !p?.jobHolders.length) {
+          noDefaults.push(pid);
+          continue;
+        }
+        const list = [...(p.lineManager ? [{ userId: p.lineManager.id, role: 'LM' as const }] : []), ...p.jobHolders.map((j) => ({ userId: j.id, role: 'JH' as const }))];
+        const r = invitePeople(db, u.orgId, pid, u.id, list, b.dueDate ?? null);
+        invited += r.invited.length;
+        skipped.push(...r.skipped);
+      }
+      return { invited, skipped, noDefaults };
+    })();
+    res.json(out);
+  });
+
+  r.patch('/:id', admin, (req, res) => {
+    const { row } = adminOwned(req);
+    const b = body(req, z.object({ dueDate: z.string().max(20).nullable() }));
+    db.prepare("UPDATE questionnaire_responses SET due_date = ?, updated_at = datetime('now') WHERE id = ?").run(b.dueDate, row.id);
+    res.json({ ok: true });
+  });
 
   r.post('/:id/reopen', admin, (req, res) => {
     const { u, row } = adminOwned(req);

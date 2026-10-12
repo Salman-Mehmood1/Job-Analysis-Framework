@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Navigate, NavLink, Outlet, Route, Routes } from 'react-router-dom';
-import type { Role } from './api';
-import { useAuth } from './hooks';
+import type { MyQuestionnaire, Role } from './api';
+import { useAuth, useData } from './hooks';
 import AnalyticsPage from './pages/AnalyticsPage';
 import { LoginPage, RegisterPage } from './pages/AuthPages';
 import EvaluationDetailPage from './pages/EvaluationDetailPage';
@@ -15,6 +15,7 @@ import OrganizationPage from './pages/OrganizationPage';
 import PositionsPage from './pages/PositionsPage';
 import ReviewQueuePage from './pages/ReviewQueuePage';
 import { MyQuestionnairesPage, RespondQuestionnairePage } from './pages/RespondentPages';
+import RespondentsOverviewPage from './pages/RespondentsOverviewPage';
 import UsersPage from './pages/UsersPage';
 
 export const HOME: Record<Role, string> = { admin: '/admin', evaluator: '/evaluator', management: '/management', respondent: '/respondent' };
@@ -23,6 +24,7 @@ const NAV: Record<Role, { to: string; label: string; end?: boolean }[]> = {
   admin: [
     { to: '/admin', label: 'Dashboard', end: true },
     { to: '/admin/evaluations', label: 'Evaluations & assignments' },
+    { to: '/admin/respondents', label: 'Questionnaire requests' },
     { to: '/admin/positions', label: 'Positions' },
     { to: '/admin/organization', label: 'Companies & departments' },
     { to: '/admin/users', label: 'Users' },
@@ -38,6 +40,7 @@ const NAV: Record<Role, { to: string; label: string; end?: boolean }[]> = {
   management: [
     { to: '/management', label: 'Dashboard', end: true },
     { to: '/management/review', label: 'Review & calibration' },
+    { to: '/management/respondents', label: 'Questionnaire requests' },
     { to: '/management/grades', label: 'Grade structures' },
     { to: '/management/jd', label: 'JD analyser' },
   ],
@@ -49,6 +52,15 @@ const PANEL_NAME: Record<Role, string> = {
   management: 'Management panel',
   respondent: 'Job holder & line manager panel',
 };
+
+/** Staff can also be asked to answer a job's questionnaire as its line manager or job holder. */
+function StaffQuestionnairesLink({ role }: { role: Role }) {
+  const mine = useData<MyQuestionnaire[]>('/questionnaire-responses/mine');
+  const list = mine.data ?? [];
+  if (!list.length) return null;
+  const open = list.filter((q) => q.status !== 'submitted').length;
+  return <NavLink to={`${HOME[role]}/questionnaires`}>My questionnaires{open ? ` (${open})` : ''}</NavLink>;
+}
 
 function Panel({ role }: { role: Role }) {
   const { user, organization, logout } = useAuth();
@@ -66,6 +78,7 @@ function Panel({ role }: { role: Role }) {
               {n.label}
             </NavLink>
           ))}
+          {role !== 'respondent' && <StaffQuestionnairesLink role={role} />}
         </nav>
         <div className="sidebar-foot">
           <div>{user.name}</div>
@@ -102,6 +115,9 @@ export default function App() {
         <Route path="users" element={<UsersPage />} />
         <Route path="grades" element={<GradesPage />} />
         <Route path="jd" element={<JdAnalyzerPage />} />
+        <Route path="respondents" element={<RespondentsOverviewPage />} />
+        <Route path="questionnaires" element={<MyQuestionnairesPage />} />
+        <Route path="questionnaires/:id" element={<RespondQuestionnairePage />} />
       </Route>
 
       <Route path="/evaluator" element={<Panel role="evaluator" />}>
@@ -109,6 +125,8 @@ export default function App() {
         <Route path="evaluations/:id" element={<EvaluatePage />} />
         <Route path="results" element={<MyResultsPage />} />
         <Route path="jd" element={<JdAnalyzerPage />} />
+        <Route path="questionnaires" element={<MyQuestionnairesPage />} />
+        <Route path="questionnaires/:id" element={<RespondQuestionnairePage />} />
       </Route>
 
       <Route path="/respondent" element={<Panel role="respondent" />}>
@@ -123,6 +141,9 @@ export default function App() {
         <Route path="jobs/:positionId" element={<JobCalibrationPage />} />
         <Route path="grades" element={<GradesPage />} />
         <Route path="jd" element={<JdAnalyzerPage />} />
+        <Route path="respondents" element={<RespondentsOverviewPage />} />
+        <Route path="questionnaires" element={<MyQuestionnairesPage />} />
+        <Route path="questionnaires/:id" element={<RespondQuestionnairePage />} />
       </Route>
 
       <Route path="*" element={<Navigate to={user ? HOME[user.role] : '/login'} replace />} />

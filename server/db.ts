@@ -169,6 +169,17 @@ CREATE TABLE IF NOT EXISTS questionnaire_responses (
   UNIQUE (position_id, user_id, role)
 );
 
+-- The people a position's questionnaire goes to by default: its line manager (LM, one)
+-- and job holders (JH, optional, any number). Any active user can be named.
+CREATE TABLE IF NOT EXISTS position_people (
+  id INTEGER PRIMARY KEY,
+  org_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  position_id INTEGER NOT NULL REFERENCES positions(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('JH','LM')),
+  UNIQUE (position_id, user_id, role)
+);
+
 CREATE INDEX IF NOT EXISTS idx_eval_org ON evaluations(org_id);
 CREATE INDEX IF NOT EXISTS idx_eval_evaluator ON evaluations(evaluator_id);
 CREATE INDEX IF NOT EXISTS idx_pos_org ON positions(org_id);
