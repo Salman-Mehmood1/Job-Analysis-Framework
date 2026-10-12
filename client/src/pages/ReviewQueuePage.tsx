@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { api, type Evaluation, type JobRecord } from '../api';
+import { api, type Evaluation, type JobRecord, type RespondentOverview } from '../api';
+import { RespondentRequestsPanel, isOverdue } from '../components/RespondentRequests';
 import { JobBadges, rangeFlag, spreadFlag } from '../components/JobBits';
 import { type Filters, SlicerBar, applyFilters } from '../components/Slicers';
 import { ErrorAlert, StatusBadge, fmt, fmtDate } from '../components/ui';
@@ -8,10 +9,15 @@ import { useData } from '../hooks';
 
 export default function ReviewQueuePage() {
   const [params, setParams] = useSearchParams();
-  const tab = params.get('tab') === 'calibration' ? 'calibration' : 'single';
+  const tab = params.get('tab') === 'calibration' ? 'calibration' : params.get('tab') === 'requests' ? 'requests' : 'single';
+  const overview = useData<RespondentOverview>('/questionnaire-responses/overview');
+  const allEvals = useData<Evaluation[]>('/evaluations');
+  const requests = overview.data?.requests ?? [];
+  const openRequests = requests.filter((r) => r.status !== 'submitted').length;
+  const overdueRequests = requests.filter((r) => isOverdue(r)).length;
   const jobs = useData<JobRecord[]>('/jobs');
   const ready = (jobs.data ?? []).filter((j) => j.mode === 'multi' && j.status === 'submitted').length;
-  const single = (useData<Evaluation[]>('/evaluations').data ?? []).filter((e) => (e.raterCount ?? 1) === 1 && e.status === 'submitted').length;
+  const single = (allEvals.data ?? []).filter((e) => (e.raterCount ?? 1) === 1 && e.status === 'submitted').length;
   return (
     <div>
       <div className="page-head">
@@ -23,8 +29,13 @@ export default function ReviewQueuePage() {
       <div className="tabs" role="tablist">
         <button role="tab" aria-selected={tab === 'single'} className={tab === 'single' ? 'on' : ''} onClick={() => setParams({})}>Single-evaluator reviews ({single})</button>
         <button role="tab" aria-selected={tab === 'calibration'} className={tab === 'calibration' ? 'on' : ''} onClick={() => setParams({ tab: 'calibration' })}>Calibration ({ready} ready)</button>
+        <button role="tab" aria-selected={tab === 'requests'} className={tab === 'requests' ? 'on' : ''} onClick={() => setParams({ tab: 'requests' })}>
+          Questionnaire requests ({openRequests} open{overdueRequests ? `, ${overdueRequests} overdue` : ''})
+        </button>
       </div>
-      {tab === 'single' ? <SingleQueue /> : <CalibrationQueue jobs={jobs.data ?? []} error={jobs.error} />}
+      {tab === 'single' && <SingleQueue />}
+      {tab === 'calibration' && <CalibrationQueue jobs={jobs.data ?? []} error={jobs.error} />}
+      {tab === 'requests' && <RespondentRequestsPanel overview={overview} evaluations={allEvals.data ?? []} linkBase="/management" />}
     </div>
   );
 }

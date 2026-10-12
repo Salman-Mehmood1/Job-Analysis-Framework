@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { api, type Evaluation, type OrgUser, type Position } from '../api';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { api, type Evaluation, type OrgUser, type Position, type RespondentOverview } from '../api';
+import { RespondentRequestsPanel, isOverdue, respondentWaits } from '../components/RespondentRequests';
 import { type PeopleChoice, PeoplePicker, peopleOfPosition } from '../components/PeoplePicker';
 import { type Filters, SlicerBar, applyFilters } from '../components/Slicers';
 import { ErrorAlert, Modal, StatusBadge, fmt, fmtDate } from '../components/ui';
@@ -156,7 +157,7 @@ function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: s
           </div>
           {noLineManager.length > 0 && (
             <div className="alert warn small" style={{ marginTop: 8, marginBottom: 0 }}>
-              No line manager for {noLineManager.map((pid) => positionById.get(pid)?.code).join(', ')}. You can ask one later from the evaluation or the questionnaire requests page.
+              No line manager for {noLineManager.map((pid) => positionById.get(pid)?.code).join(', ')}. You can ask one later from the evaluation or the Questionnaire requests tab.
             </div>
           )}
         </div>
@@ -171,14 +172,30 @@ function AssignModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: s
   );
 }
 
+const OPEN = ['assigned', 'in_progress', 'returned'];
+
 export default function EvaluationsAdminPage() {
   const nav = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const tab = params.get('tab') === 'requests' ? 'requests' : 'evaluations';
   const evals = useData<Evaluation[]>('/evaluations');
+  // Questionnaire evaluations depend on these requests, so both tabs share one load.
+  const overview = useData<RespondentOverview>('/questionnaire-responses/overview');
+  const requests = overview.data?.requests ?? [];
+  const [onlyWaiting, setOnlyWaiting] = useState(false);
   const [filters, setFilters] = useState<Filters>({});
   const [assigning, setAssigning] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
-  const rows = useMemo(() => applyFilters(evals.data ?? [], filters), [evals.data, filters]);
+  const waitsFor = (e: Evaluation) => (e.method === 'questionnaire' && OPEN.includes(e.status) ? respondentWaits(requests, e.position.id) : []);
+  const rows = useMemo(
+    () => applyFilters(evals.data ?? [], filters).filter((e) => !onlyWaiting || waitsFor(e).length > 0),
+    [evals.data, filters, onlyWaiting, requests], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const waitingCount = (evals.data ?? []).filter((e) => waitsFor(e).length > 0).length;
+  const openRequests = requests.filter((r) => r.status !== 'submitted').length;
+  const overdueRequests = requests.filter((r) => isOverdue(r)).length;
+  const missingLm = overview.data?.missing.length ?? 0;
   const today = new Date().toISOString().slice(0, 10);
 
   return (
@@ -186,18 +203,36 @@ export default function EvaluationsAdminPage() {
       <div className="page-head">
         <div>
           <h1>Evaluations &amp; assignments</h1>
-          <p className="muted">Every evaluation in the organisation. Assign positions to evaluators and track progress.</p>
+          <p className="muted">
+            Every evaluation in the organisation, and the line manager / job holder questionnaires that questionnaire evaluations wait for. Assign positions to evaluators and track progress.
+          </p>
         </div>
         <button className="primary" onClick={() => setAssigning(true)}>+ Assign evaluations</button>
       </div>
       {notice && <div className="alert ok">{notice}</div>}
       {warnings.length > 0 && <div className="alert warn">{warnings.map((w) => <div key={w}>{w}</div>)}</div>}
-      <ErrorAlert error={evals.error} />
+      <div className="tabs" role="tablist">
+        <button role="tab" aria-selected={tab === 'evaluations'} className={tab === 'evaluations' ? 'on' : ''} onClick={() => setParams({})}>
+          Evaluations ({evals.data?.length ?? 0}{waitingCount ? `, ${waitingCount} waiting on questionnaires` : ''})
+        </button>
+        <button role="tab" aria-selected={tab === 'requests'} className={tab === 'requests' ? 'on' : ''} onClick={() => setParams({ tab: 'requests' })}>
+          Questionnaire requests ({openRequests} open{overdueRequests ? `, ${overdueRequests} overdue` : ''}{missingLm ? `, ${missingLm} without a line manager` : ''})
+        </button>
+      </div>
+      {tab === 'requests' ? (
+        <RespondentRequestsPanel overview={overview} evaluations={evals.data ?? []} linkBase="/admin" onChanged={evals.reload} />
+      ) : (
+      <>
+      <ErrorAlert error={evals.error ?? overview.error} />
       <SlicerBar rows={evals.data ?? []} filters={filters} onChange={setFilters} dims={['status', 'evaluator', 'company', 'department', 'grade']} />
+      <label className="row small" style={{ marginBottom: 8 }}>
+        <input type="checkbox" checked={onlyWaiting} onChange={(e) => setOnlyWaiting(e.target.checked)} />
+        Only evaluations waiting on a line manager or job holder ({waitingCount})
+      </label>
       <div className="card table-wrap">
         <table>
           <thead>
-            <tr><th>Code</th><th>Role</th><th>Company / department</th><th>Evaluator</th><th>Due</th><th>Status</th><th className="num">Points</th><th className="num">Grade</th></tr>
+            <tr><th>Code</th><th>Role</th><th>Company / department</th><th>Evaluator</th><th>Due</th><th>Status</th><th>Waiting on</th><th className="num">Points</th><th className="num">Grade</th></tr>
           </thead>
           <tbody>
             {rows.map((r) => {
@@ -217,15 +252,27 @@ export default function EvaluationsAdminPage() {
                   <td>{r.evaluator?.name ?? <span className="muted">JD analysis</span>}</td>
                   <td className={overdue ? 'flag' : ''}>{fmtDate(r.dueDate)}{overdue ? ' (overdue)' : ''}</td>
                   <td><StatusBadge status={r.status} /></td>
+                  <td className="small">
+                    {waitsFor(r).length ? (
+                      <button className="ghost" style={{ textAlign: 'left', padding: 0 }} title="See the questionnaire requests"
+                        onClick={(x) => { x.stopPropagation(); setParams({ tab: 'requests' }); }}>
+                        {waitsFor(r).map((w) => <div key={w.text} className={w.overdue ? 'flag' : ''}>{w.text}{w.overdue ? ' · overdue' : ''}</div>)}
+                      </button>
+                    ) : r.method === 'questionnaire' ? (
+                      <span className="muted">{OPEN.includes(r.status) ? 'Answers in' : 'Questionnaire'}</span>
+                    ) : <span className="muted">—</span>}
+                  </td>
                   <td className="num">{fmt(r.result?.totalPoints)}</td>
                   <td className="num">{r.result?.grade ?? '—'}</td>
                 </tr>
               );
             })}
-            {!rows.length && !evals.loading && <tr><td colSpan={8} className="muted">No evaluations yet. Use “Assign evaluations” to start.</td></tr>}
+            {!rows.length && !evals.loading && <tr><td colSpan={9} className="muted">No evaluations match. Use “Assign evaluations” to start.</td></tr>}
           </tbody>
         </table>
       </div>
+      </>
+      )}
       {assigning && (
         <AssignModal
           onClose={() => setAssigning(false)}
@@ -234,6 +281,7 @@ export default function EvaluationsAdminPage() {
             setNotice(msg);
             setWarnings(w);
             evals.reload();
+            overview.reload();
           }}
         />
       )}

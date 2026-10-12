@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { RESPONDENT_QUESTIONS } from '../../../shared/questionnaire';
-import { RESPONDENT_ROLE_LABEL, type RespondentOverview, type RespondentRequest, api } from '../api';
-import { ErrorAlert, downloadCsv, fmtDate } from '../components/ui';
-import { useData, useUser } from '../hooks';
+import { type Evaluation, RESPONDENT_ROLE_LABEL, type RespondentOverview, type RespondentRequest, api } from '../api';
+import { ErrorAlert, downloadCsv, fmtDate } from './ui';
+import { useUser } from '../hooks';
 
 const STATUS_TEXT = { invited: 'Not started', in_progress: 'In progress', submitted: 'Submitted' } as const;
 const STATUS_CLASS = { invited: 'b-assigned', in_progress: 'b-in_progress', submitted: 'b-approved' } as const;
@@ -12,11 +12,43 @@ const TOTAL = RESPONDENT_QUESTIONS.length;
 
 type Show = 'all' | 'open' | 'overdue' | 'submitted';
 
-/** Every line manager and job holder request in the organisation (admin manages, management reads). */
-export default function RespondentsOverviewPage() {
+type Loaded<T> = { data: T | null; error: string | null; loading: boolean; reload: () => void };
+
+export const isOverdue = (r: RespondentRequest, today = new Date().toISOString().slice(0, 10)) => r.status !== 'submitted' && !!r.dueDate && r.dueDate < today;
+
+/**
+ * What each open questionnaire evaluation of a job still waits for, from the job's requests
+ * (mirrors the server rule: a line manager must be asked, and everyone asked must submit).
+ */
+export function respondentWaits(requests: RespondentRequest[], positionId: number): { text: string; overdue: boolean }[] {
+  const mine = requests.filter((r) => r.positionId === positionId);
+  const out: { text: string; overdue: boolean }[] = [];
+  if (!mine.some((r) => r.role === 'LM')) out.push({ text: 'No line manager asked', overdue: false });
+  for (const r of mine.filter((x) => x.status !== 'submitted')) {
+    out.push({ text: `${r.role === 'LM' ? 'Line manager' : 'Job holder'} ${r.userName}${r.status === 'invited' ? ' (not started)' : ` (${r.answered}/${TOTAL})`}`, overdue: isOverdue(r) });
+  }
+  return out;
+}
+
+/**
+ * Every line manager and job holder request in the organisation (admin manages, management reads).
+ * Shown as a tab next to the evaluations that depend on them.
+ */
+export function RespondentRequestsPanel({
+  overview: data,
+  evaluations = [],
+  linkBase,
+  onChanged,
+}: {
+  overview: Loaded<RespondentOverview>;
+  /** Used to link each request to the job's questionnaire evaluations. */
+  evaluations?: Evaluation[];
+  /** Panel root, e.g. "/admin". */
+  linkBase: string;
+  onChanged?: () => void;
+}) {
   const user = useUser();
   const isAdmin = user.role === 'admin';
-  const data = useData<RespondentOverview>('/questionnaire-responses/overview');
   const [show, setShow] = useState<Show>('open');
   const [role, setRole] = useState<'all' | 'LM' | 'JH'>('all');
   const [q, setQ] = useState('');
@@ -28,7 +60,8 @@ export default function RespondentsOverviewPage() {
 
   const requests = data.data?.requests ?? [];
   const missing = data.data?.missing ?? [];
-  const overdue = (r: RespondentRequest) => r.status !== 'submitted' && !!r.dueDate && r.dueDate < today;
+  const overdue = (r: RespondentRequest) => isOverdue(r, today);
+  const evaluationsOf = (positionId: number) => evaluations.filter((e) => e.position.id === positionId && e.method === 'questionnaire');
   const rows = requests.filter(
     (r) =>
       (show === 'all' || (show === 'open' && r.status !== 'submitted') || (show === 'overdue' && overdue(r)) || (show === 'submitted' && r.status === 'submitted')) &&
@@ -43,6 +76,7 @@ export default function RespondentsOverviewPage() {
     try {
       await fn();
       data.reload();
+      onChanged?.();
       setNotice(msg);
     } catch (e) {
       setError((e as Error).message);
@@ -53,13 +87,10 @@ export default function RespondentsOverviewPage() {
 
   return (
     <div>
-      <div className="page-head">
-        <div>
-          <h1>Questionnaire requests</h1>
-          <p className="muted">
-            Line managers and job holders asked to answer the questionnaire pack, across every job. Chase anyone who has not started or is overdue.
-          </p>
-        </div>
+      <div className="row spread" style={{ marginBottom: 12 }}>
+        <p className="muted" style={{ margin: 0 }}>
+          Line managers and job holders asked to answer the questionnaire pack. Questionnaire evaluations can only be submitted once their job’s requests are answered, so chase anyone who has not started or is overdue.
+        </p>
         <button onClick={() => downloadCsv('questionnaire-requests.csv', [
           ['Code', 'Job', 'Company', 'Department', 'Role', 'Person', 'Email', 'Status', 'Answered', 'Due', 'Overdue', 'Asked', 'Submitted'],
           ...rows.map((r) => [r.positionCode, r.positionTitle, r.companyName, r.departmentName, RESPONDENT_ROLE_LABEL[r.role], r.userName, r.userEmail,
@@ -94,7 +125,11 @@ export default function RespondentsOverviewPage() {
                   <td><strong>{m.positionCode}</strong> {m.positionTitle}</td>
                   <td className="small">{m.companyName} / {m.departmentName}</td>
                   <td className="num">{m.evaluations}</td>
-                  <td>{m.defaultLineManager?.name ?? (isAdmin ? <Link to="/admin/positions">Not set: set it on Positions</Link> : <span className="muted">Not set</span>)}</td>
+                  <td>{m.defaultLineManager?.name ?? (isAdmin ? <Link to="/admin/positions">Not set: set it on Positions</Link> : <span className="muted">Not set</span>)}
+                    {evaluationsOf(m.positionId).map((e) => (
+                      <div key={e.id} className="small"><Link to={`${linkBase}/evaluations/${e.id}`}>Open {e.evaluator?.name ?? 'the'}’s evaluation</Link></div>
+                    ))}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -137,7 +172,20 @@ export default function RespondentsOverviewPage() {
           <tbody>
             {rows.map((r) => (
               <tr key={r.id}>
-                <td><strong>{r.positionCode}</strong> {r.positionTitle}{!r.questionnaireEvaluations && <div className="small muted">No questionnaire evaluation yet</div>}</td>
+                <td>
+                  <strong>{r.positionCode}</strong> {r.positionTitle}
+                  {!r.questionnaireEvaluations ? (
+                    <div className="small muted">No questionnaire evaluation yet</div>
+                  ) : (
+                    <div className="small">
+                      {evaluationsOf(r.positionId).map((e) => (
+                        <Link key={e.id} to={`${linkBase}/evaluations/${e.id}`} style={{ marginRight: 8 }}>
+                          {e.evaluator?.name ?? 'Evaluation'}’s evaluation
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </td>
                 <td className="small">{r.companyName} / {r.departmentName}</td>
                 <td>{RESPONDENT_ROLE_LABEL[r.role]}</td>
                 <td>{r.userName}{USER_ROLE[r.userRole] && <span className="badge b-neutral" style={{ marginLeft: 6 }}>{USER_ROLE[r.userRole]}</span>}<div className="small muted">{r.userEmail}</div></td>

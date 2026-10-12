@@ -15,7 +15,6 @@ import OrganizationPage from './pages/OrganizationPage';
 import PositionsPage from './pages/PositionsPage';
 import ReviewQueuePage from './pages/ReviewQueuePage';
 import { MyQuestionnairesPage, RespondQuestionnairePage } from './pages/RespondentPages';
-import RespondentsOverviewPage from './pages/RespondentsOverviewPage';
 import UsersPage from './pages/UsersPage';
 
 export const HOME: Record<Role, string> = { admin: '/admin', evaluator: '/evaluator', management: '/management', respondent: '/respondent' };
@@ -24,7 +23,6 @@ const NAV: Record<Role, { to: string; label: string; end?: boolean }[]> = {
   admin: [
     { to: '/admin', label: 'Dashboard', end: true },
     { to: '/admin/evaluations', label: 'Evaluations & assignments' },
-    { to: '/admin/respondents', label: 'Questionnaire requests' },
     { to: '/admin/positions', label: 'Positions' },
     { to: '/admin/organization', label: 'Companies & departments' },
     { to: '/admin/users', label: 'Users' },
@@ -40,7 +38,6 @@ const NAV: Record<Role, { to: string; label: string; end?: boolean }[]> = {
   management: [
     { to: '/management', label: 'Dashboard', end: true },
     { to: '/management/review', label: 'Review & calibration' },
-    { to: '/management/respondents', label: 'Questionnaire requests' },
     { to: '/management/grades', label: 'Grade structures' },
     { to: '/management/jd', label: 'JD analyser' },
   ],
@@ -115,7 +112,7 @@ export default function App() {
         <Route path="users" element={<UsersPage />} />
         <Route path="grades" element={<GradesPage />} />
         <Route path="jd" element={<JdAnalyzerPage />} />
-        <Route path="respondents" element={<RespondentsOverviewPage />} />
+        <Route path="respondents" element={<Navigate to="/admin/evaluations?tab=requests" replace />} />
         <Route path="questionnaires" element={<MyQuestionnairesPage />} />
         <Route path="questionnaires/:id" element={<RespondQuestionnairePage />} />
       </Route>
@@ -141,7 +138,7 @@ export default function App() {
         <Route path="jobs/:positionId" element={<JobCalibrationPage />} />
         <Route path="grades" element={<GradesPage />} />
         <Route path="jd" element={<JdAnalyzerPage />} />
-        <Route path="respondents" element={<RespondentsOverviewPage />} />
+        <Route path="respondents" element={<Navigate to="/management/review?tab=requests" replace />} />
         <Route path="questionnaires" element={<MyQuestionnairesPage />} />
         <Route path="questionnaires/:id" element={<RespondQuestionnairePage />} />
       </Route>

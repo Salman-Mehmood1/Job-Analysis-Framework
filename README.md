@@ -80,7 +80,7 @@ On first start a demo organisation is created with a worked example of every sce
 | `kamran@demo.com` / `hina@demo.com` | Line manager / job holder, Head of IT | Submitted / not yet started |
 | `farah@demo.com` / `usman@demo.com` | Line manager / job holder, Senior Software Developer | Both submitted |
 | `tariq@demo.com` | Line manager, Quality Manager | Draft saved, not submitted and overdue (no job holder: they are optional) |
-| `rehan@demo.com` | Line manager, Head of Retail Operations | Set on the position but not asked yet: shows on *Questionnaire requests* as missing |
+| `rehan@demo.com` | Line manager, Head of Retail Operations | Set on the position but not asked yet: shows on the *Questionnaire requests* tab as missing |
 
 Bilal (`evaluator2@demo.com`) is also the line manager of the Regional Sales Manager: staff can answer a questionnaire from **My questionnaires** in their own panel.
 
@@ -103,7 +103,7 @@ Grades are derived from the grade structure when read, so editing a structure's 
 - Each position can have a default line manager and job holders (Positions page, or the `lineManagerEmail` / `jobHolderEmails` import columns, which can also create their accounts).
 - Assigning with the questionnaire method lets you pick them per position (pre-filled from the position) and asks them straight away.
 - Anyone in the organisation can be a line manager or job holder, but nobody can both evaluate a job and answer its questionnaire.
-- *Questionnaire requests* (admin and management) lists every request with status, progress and due date, flags overdue ones and jobs with no line manager asked, and lets the admin chase, re-date, reopen or remove them.
+- The *Questionnaire requests* tab (admin: in *Evaluations & assignments*; management: in *Review & calibration*, read-only) lists every request with status, progress and due date, flags overdue ones and jobs with no line manager asked, and lets the admin chase, re-date, reopen or remove them. Each request links to the evaluations that depend on it, and the evaluations list shows what each questionnaire evaluation is waiting on.
 
 **Grade structures** come in five demo variants, each with salary bands built from different inputs (Grading & Rewards Framework):
 
